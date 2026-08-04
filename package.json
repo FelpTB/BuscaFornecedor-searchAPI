@@ -1,12 +1,13 @@
 {
   "name": "busca-fornecedor-api-mcp",
   "version": "1.0.0",
-  "description": "API + MCP de busca híbrida B2B (Qdrant) — base inicial",
+  "description": "API + MCP de busca híbrida B2B (Qdrant) com X-Ray pré-proxy Microsoft",
   "main": "src/server.js",
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "test": "node scripts/test-unit.mjs",
     "test:mcp": "node scripts/test-mcp-sdk.mjs"
   },
   "engines": {

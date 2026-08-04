@@ -1,0 +1,25 @@
+---
+description: Segurança — defesa em profundidade, secrets, validação e multi-tenant
+alwaysApply: true
+---
+
+# Segurança
+
+## Atual
+
+- Secrets só em env (nunca commitar `.env`).
+- Filtros allowlisted; body size limitado.
+- Auth é **stub** — não fingir que JWT/API key já existem.
+- MCP hoje sem auth; qualquer auth nova deve cobrir REST **e** MCP.
+
+## Ao implementar ou revisar
+
+- Validar entradas nas portas (REST + Zod no MCP).
+- Nunca executar código/SQL vindos do usuário.
+- Não logar API keys, tokens, nem PII desnecessária.
+- SSRF: não fazer fetch a URLs controladas pelo cliente sem allowlist.
+- Prompt injection: preferir tools MCP com schemas estritos; validar outputs de LLM/terceiros como JSON.
+- Multi-tenant (roadmap): toda persistência/cota deve isolar por `org_id` (e `tenant_id` se adotado).
+- Defesa em profundidade: borda + serviço + persistência validam — não confiar só no edge.
+
+Ver `docs/security.md` e `docs/GUIA_IMPLEMENTACAO.md` §7–8 (visão-alvo).

@@ -1,0 +1,18 @@
+---
+description: Testes e smoke — o que cobrir ao alterar comportamento
+globs: "**/*.{js,mjs}"
+alwaysApply: false
+---
+
+# Testing
+
+Hoje não há Jest/Vitest. Baseline: `npm run test:mcp` (`scripts/test-mcp-sdk.mjs`).
+
+## Ao adicionar feature
+
+1. Preferir smoke/script reproduzível ou testes unitários se o framework for introduzido.
+2. Mudança em `searchService` / rotas / MCP: atualizar ou estender `test-mcp-sdk.mjs` (ou suite nova).
+3. Auth (Fase 1): cobrir 401 sem key e 200 com key válida (REST + MCP).
+4. Não quebrar contrato público de `POST /search/text` e tools `search_text` / `get_config` sem versionar.
+
+Quando introduzir framework de testes, coloque em `tests/` e documente o script npm em `package.json`.

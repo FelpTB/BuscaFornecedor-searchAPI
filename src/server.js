@@ -1,29 +1,17 @@
-import express from "express";
 import "dotenv/config";
-import { mountMcp } from "./mcp/mountMcp.js";
+import { createApp } from "./app.js";
+import { validateEnv, getServerConfig } from "./config/env.js";
 import { logSuccess } from "./logger.js";
-import { createApiRouter, executeSearchByText, getPublicConfig } from "./routes/index.js";
 
-const app = express();
-app.use(express.json({ limit: "2mb" }));
+const envResult = validateEnv({ soft: process.env.NODE_ENV === "test" });
+if (envResult.warnings?.length) {
+  for (const w of envResult.warnings) {
+    console.warn(`[boot] WARN: ${w}`);
+  }
+}
 
-// Health público (fora do router autenticado) — usado pelo Railway
-app.get("/health", (_req, res) => {
-  res.status(200).json({
-    status: "ok",
-    mcp: "/mcp",
-    search: "/search/text",
-    uptime: process.uptime(),
-  });
-});
-
-app.use(createApiRouter());
-
-// Mesma lógica de negócio exposta como tools MCP (Streamable HTTP)
-mountMcp(app, { executeSearchByText, getPublicConfig });
-
-const PORT = Number(process.env.PORT) || 3000;
-const HOST = process.env.HOST || "0.0.0.0";
+const app = createApp();
+const { port: PORT, host: HOST, authMode } = getServerConfig();
 
 const server = app.listen(PORT, HOST, () => {
   logSuccess("boot", "BuscaFornecedor API+MCP online", {
@@ -31,8 +19,11 @@ const server = app.listen(PORT, HOST, () => {
     port: PORT,
     mcp: "/mcp",
     search: "/search/text",
+    auth_mode: authMode,
   });
-  console.log(`API http://${HOST}:${PORT}  |  MCP /mcp  |  POST /search/text`);
+  console.log(
+    `API http://${HOST}:${PORT}  |  MCP /mcp  |  POST /search/text  |  X-Ray /search/xray  |  auth=${authMode}`,
+  );
 });
 
 function shutdown(signal) {

@@ -6,3 +6,5 @@ node_modules/
 .DS_Store
 _scaffold.mjs
 .railway/
+.cursor/mcp.json
+_vendor_apis/

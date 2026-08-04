@@ -1,0 +1,18 @@
+---
+description: Distingue código atual, PLANO_ESCALAVEL e GUIA_IMPLEMENTACAO
+alwaysApply: true
+---
+
+# Roadmap vs implementação
+
+Antes de escrever código “como se já tivesse fila/auth/Postgres”:
+
+1. Confirmar no `src/` se o componente existe.
+2. Se for evolução deste repo → seguir fases de `docs/PLANO_ESCALAVEL.md`.
+3. Se for visão de longo prazo (busca 100% async, RabbitMQ, Query Manager regional/nacional) → `docs/GUIA_IMPLEMENTACAO.md` + ADRs — **propor**, não assumir feito.
+
+## Ordem de evolução deste repo
+
+Fase 0 ✅ núcleo → Fase 1 API key → Fase 2 telemetria BullMQ → Fase 3 cotas → Fase 4 partições → Fase 5 hardening.
+
+Hot path **nunca** espera write no Supabase (princípio do PLANO).

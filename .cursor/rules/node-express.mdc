@@ -1,0 +1,30 @@
+---
+description: Convenções Node.js ESM + Express para este repositório
+globs: src/**/*.js
+alwaysApply: false
+---
+
+# Node / Express
+
+- ESM only (`import`/`export`). Runtime Node `>=20`.
+- Async/await em I/O. Sem callbacks.
+- Express routers em `src/routes/`; boot em `src/server.js`.
+- Erros HTTP: `Error` com `status` ou `statusCode` (ex.: `err.status = 400`).
+- Body JSON limitado (`express.json({ limit: "2mb" })` — não aumentar sem necessidade).
+- Logs via `src/logger.js` (estruturados). Nunca logar secrets, API keys ou hashes completos.
+- Config via `process.env` + `.env.example`. Não hardcodar secrets.
+- Auth: evoluir `src/middleware/auth.js`; shape `req.auth = { authenticated, apiKeyId, userId, orgId }`.
+
+```js
+// ❌ BAD — lógica de busca na rota
+router.post("/search/text", async (req, res) => {
+  const vec = await openai.embeddings.create(...);
+  ...
+});
+
+// ✅ GOOD — rota só delega
+router.post("/search/text", async (req, res) => {
+  const result = await executeSearchByText(req.body);
+  res.json(result);
+});
+```

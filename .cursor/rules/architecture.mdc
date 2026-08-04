@@ -1,0 +1,42 @@
+---
+description: Arquitetura do BuscaFornecedor — camadas, hot path e princípios não negociáveis
+alwaysApply: true
+---
+
+# Arquitetura BuscaFornecedor
+
+## Stack atual (fonte da verdade)
+
+Node 20+ ESM · Express · MCP Streamable HTTP · Qdrant · OpenAI · Railway.
+
+**Não** inventar FastAPI, RabbitMQ, PostgreSQL ou workers a menos que a tarefa peça explicitamente implementar o roadmap.
+
+## Camadas
+
+```
+REST (/search/text) ──┐
+                      ├──► searchService (núcleo) ──► embeddings + multiVectorSearch + llmRerank
+MCP (/mcp tools) ─────┘                                    │
+                                                           ▼
+                                                         Qdrant
+```
+
+- **Portas** (`routes/`, `mcp/`): autenticam, validam, delegam. Sem regra de negócio.
+- **Serviço** (`searchService.js`): única fonte de lógica de busca.
+- **Infra** (`qdrantClient.js`, `embeddings.js`): clientes; sem orquestração de domínio.
+
+## Princípios (não negociar)
+
+1. REST e MCP compartilham o **mesmo** serviço — nunca duplicar lógica.
+2. Todo endpoint de negócio tem **tool MCP correspondente**.
+3. Hot path = sync (OpenAI + Qdrant). Persistência/telemetria futura = async (ver `docs/PLANO_ESCALAVEL.md`).
+4. Respeitar padrões existentes; não introduzir DI containers, ORM ou filas sem tarefa explícita.
+5. Antes de decisões arquiteturais, consultar `docs/architecture.md` e `adr/`.
+
+## Roadmap vs código
+
+| Fonte | Uso |
+|-------|-----|
+| Código em `src/` | O que existe hoje |
+| `docs/PLANO_ESCALAVEL.md` | Evolução deste repo (API key, Redis/BullMQ, Supabase) |
+| `docs/GUIA_IMPLEMENTACAO.md` | Visão-alvo de longo prazo — **não** descrever como implementado |

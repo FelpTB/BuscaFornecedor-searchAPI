@@ -1,64 +1,21 @@
+import { randomUUID } from "node:crypto";
 import { multiVectorSearch } from "./multiVectorSearch.js";
 import { llmRerank } from "./llmRerank.js";
 import { embedQueryText } from "./embeddings.js";
 import { normalizeKeyword } from "./normalizeKeyword.js";
 import { logSuccess } from "./logger.js";
+import {
+  LIMITS,
+  getAuthMode,
+  getBm25PayloadKeys,
+  getDimensionKeys,
+  getVectorNamesMap,
+  getAllowedPayloadKeys,
+  getFullTextPayloadKeys,
+} from "./config/env.js";
 
 const COLLECTION_NAME = process.env.COLLECTION_NAME;
 const ENDPOINT_SEARCH_TEXT = "POST /search/text";
-
-function getDimensionKeys() {
-  const env = process.env.QDRANT_DIMENSION_KEYS;
-  if (env && typeof env === "string") {
-    const keys = env.split(",").map((s) => s.trim()).filter(Boolean);
-    if (keys.length >= 1) return keys;
-  }
-  return ["segmento", "produtos", "clientes"];
-}
-
-/** Mapeamento chave da API → nome do vetor na coleção Qdrant. QDRANT_VECTOR_NAMES deve ter o mesmo número de nomes que QDRANT_DIMENSION_KEYS (ordem 1:1). */
-function getVectorNamesMap() {
-  const dimensionKeys = getDimensionKeys();
-  const env = process.env.QDRANT_VECTOR_NAMES;
-  if (env && typeof env === "string") {
-    const names = env.split(",").map((s) => s.trim()).filter(Boolean);
-    if (names.length === dimensionKeys.length) {
-      const map = {};
-      dimensionKeys.forEach((key, i) => { map[key] = names[i]; });
-      return map;
-    }
-  }
-  const defaultNames = ["v_segmento", "v_produtos", "v_clientes"];
-  const map = {};
-  dimensionKeys.forEach((key, i) => {
-    map[key] = (defaultNames.length === dimensionKeys.length && defaultNames[i]) ? defaultNames[i] : `v_${key}`;
-  });
-  return map;
-}
-
-/** Chaves de payload permitidas para filtro keyword (env QDRANT_PAYLOAD_KEYS). Se vazio, usa as chaves keyword do esquema da coleção. */
-const DEFAULT_PAYLOAD_KEYS = ["modelo_negocio", "cidade", "uf", "nome_empresa", "cnpj"];
-
-function getAllowedPayloadKeys() {
-  const env = process.env.QDRANT_PAYLOAD_KEYS;
-  if (env && typeof env === "string") {
-    const keys = env.split(",").map((s) => s.trim()).filter(Boolean);
-    if (keys.length > 0) return keys;
-  }
-  return DEFAULT_PAYLOAD_KEYS;
-}
-
-/** Chaves de payload com índice full-text no Qdrant (env QDRANT_PAYLOAD_KEYS_TEXT). Usadas em filter com match.text. Se vazio, nenhum filtro full-text. */
-const DEFAULT_PAYLOAD_KEYS_TEXT = ["descricao", "endereco", "publico", "site", "email", "certificacoes"];
-
-function getFullTextPayloadKeys() {
-  const env = process.env.QDRANT_PAYLOAD_KEYS_TEXT;
-  if (env && typeof env === "string") {
-    const keys = env.split(",").map((s) => s.trim()).filter(Boolean);
-    if (keys.length > 0) return keys;
-  }
-  return DEFAULT_PAYLOAD_KEYS_TEXT;
-}
 
 /** Todas as chaves permitidas para filter/filter_not: keyword + full-text (sem duplicatas). */
 function getAllowedFilterKeys() {
@@ -68,11 +25,10 @@ function getAllowedFilterKeys() {
   return [...set];
 }
 
-/** Lista de chaves de payload usadas para construir o vetor BM25 (env QDRANT_BM25_PAYLOAD_KEYS, opcional). */
-function getBm25PayloadKeys() {
-  const env = process.env.QDRANT_BM25_PAYLOAD_KEYS;
-  if (!env || typeof env !== "string") return [];
-  return env.split(",").map((s) => s.trim()).filter(Boolean);
+function clampLimit(value, fallback, max) {
+  const n = value != null ? Number(value) : fallback;
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.min(Math.trunc(n), max);
 }
 
 function normalizeWeights(weights, dimensionKeys, includeBm25 = false) {
@@ -632,12 +588,21 @@ async function executeSearchByText(rawBody = {}, options = {}) {
     weightsCoerced.value ??
     buildEqualWeights(dimensionKeys, Boolean(bm25_query));
 
-  const limit_per_vector = body.limit_per_vector != null ? Number(body.limit_per_vector) : 50;
-  const final_limit = body.final_limit != null ? Number(body.final_limit) : 20;
+  const limit_per_vector = clampLimit(
+    body.limit_per_vector,
+    LIMITS.limitPerVectorDefault,
+    LIMITS.limitPerVectorMax,
+  );
+  const final_limit = clampLimit(
+    body.final_limit,
+    LIMITS.finalLimitDefault,
+    LIMITS.finalLimitMax,
+  );
   const embedDimensions = getEmbedDimensionsForCollection(COLLECTION_NAME, body);
   const start = Date.now();
-  const debugMode = options.debug === true;
+  const debugMode = options.debug === true || body.debug === true;
   const rerankMode = options.rerank === true || body.rerank === true;
+  const search_id = options.searchId || randomUUID();
 
   try {
     const { vectors, perDimText, embedding_dims } = await buildVectorsFromQueryText({
@@ -671,12 +636,16 @@ async function executeSearchByText(rawBody = {}, options = {}) {
     }
 
     logSuccess(ENDPOINT_SEARCH_TEXT, "Query vetorizada; iniciando busca", {
+      search_id,
       collection: COLLECTION_NAME,
       embedding_dims,
       dimensions: dimensionKeys.length,
       duration_ms: Date.now() - start,
       query_preview: query.slice(0, 80),
       per_dim_override: Boolean(queries),
+      has_filter: Boolean(filterCoerced.value),
+      bm25: Boolean(bm25_query),
+      rerank: rerankMode,
     });
 
     const payload = await runMultiVectorSearch({
@@ -687,12 +656,14 @@ async function executeSearchByText(rawBody = {}, options = {}) {
     });
 
     return {
+      search_id,
       ...payload,
       query,
       mode: "text",
       embedding_model: "text-embedding-3-small",
       embedding_dims,
       query_texts: perDimText,
+      latency_ms: Date.now() - start,
     };
   } catch (err) {
     if (err.status) throw err;
@@ -740,10 +711,21 @@ function getPublicConfig() {
       pool_size: Number(process.env.LLM_RERANK_POOL) || 20,
       usage: "Envie rerank=1 como query param ou rerank: true no body para ativar. Inclua query_text com a busca original.",
     },
+    limits: {
+      limit_per_vector_max: LIMITS.limitPerVectorMax,
+      final_limit_max: LIMITS.finalLimitMax,
+      limit_per_vector_default: LIMITS.limitPerVectorDefault,
+      final_limit_default: LIMITS.finalLimitDefault,
+    },
+    auth: {
+      mode: getAuthMode(),
+      required: getAuthMode() !== "off",
+      headers: ["Authorization: Bearer <key>", "X-Api-Key"],
+    },
     mcp: {
       endpoint: "/mcp",
       tools: ["get_config", "search_text"],
-      auth: false,
+      auth: getAuthMode() !== "off",
     },
   };
 }

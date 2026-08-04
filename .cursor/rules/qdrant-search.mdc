@@ -1,0 +1,26 @@
+---
+description: Busca híbrida Qdrant dual-path RRF e contratos de filtro/pesos
+globs: src/searchService.js,src/multiVectorSearch.js,src/embeddings.js,src/llmRerank.js,src/qdrantClient.js,src/normalizeKeyword.js
+alwaysApply: false
+---
+
+# Qdrant / Search
+
+Algoritmo atual: **dual-path-rrf-v5** (`multiVectorSearch.js`).
+
+1. Embed por dimensão (OpenAI `text-embedding-3-small`)
+2. Path A: BM25-first → dense no prefetch
+3. Path B: Dense-first + BM25 modifier
+4. Merge RRF (`RRF_K`, default 10)
+5. Post-filter `filter_not` (full-text client-side quando necessário)
+6. Rerank LLM opcional
+
+## Regras
+
+- Dimensões / vetores / payload keys vêm de **env** (`QDRANT_*`). Não hardcodar nomes de coleção/vetores sem fallback alinhado a `.env.example`.
+- Filtros: apenas chaves allowlisted (`getAllowedFilterKeys`). Keyword vs full-text separados.
+- Pesos: soma = 1.0; incluir `bm25` quando híbrido.
+- Cliente Qdrant: lazy singleton em `qdrantClient.js`.
+- Mudanças no algoritmo: atualizar `docs/qdrant.md` e ADR se alterar contrato público.
+
+Não misturar escrita de telemetria/Postgres no hot path de busca.

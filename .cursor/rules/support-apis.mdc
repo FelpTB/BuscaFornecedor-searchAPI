@@ -1,0 +1,17 @@
+---
+description: APIs de suporte externas — cidades, Qdrant Request, searchAPI, site MCP
+alwaysApply: false
+---
+
+# APIs de suporte
+
+Ao integrar regional search, ingestão ou MCP hub, consultar `docs/support-apis.md` e ADR 008.
+
+| Serviço | Usar para | Não usar para |
+|---------|-----------|---------------|
+| API-busca-cidades | Raio de cidades / filtro regional | Ranking de fornecedores |
+| Qdrant_Request_API | Pipeline indexação, ops Qdrant, X-Ray | Superfície pública slim (preferir searchAPI) |
+| BuscaFornecedor-searchAPI / este repo | Hot path busca + MCP tools | Ingest Postgres |
+| BuscaFornecedor_MCP (site) | Narrativa/roadmap | Runtime MCP |
+
+Validar live `/config` (vector_names, BM25) antes de calibrar pesos.

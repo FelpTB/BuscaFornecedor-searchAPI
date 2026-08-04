@@ -1,0 +1,28 @@
+---
+description: Padrões MCP Streamable HTTP — parity com REST e Zod
+globs: src/mcp/**/*.js,scripts/**/*.mjs
+alwaysApply: false
+---
+
+# MCP
+
+- Transport: Streamable HTTP em `/mcp` (`mountMcp.js`).
+- Tools em `createMcpServer.js` com **Zod** `inputSchema`.
+- Toda tool de negócio chama o **mesmo** service da rota HTTP correspondente.
+- Preferir respostas JSON em `content[{ type: "text", text: JSON.stringify(...) }]`.
+- Anotar tools read-only com `readOnlyHint: true` quando aplicável.
+- Auth MCP deve espelhar REST quando implementada (mesmo middleware/contrato).
+- Sessões in-memory: adequado a 1 instância Railway; não assumir sticky multi-instance sem redesign.
+
+```js
+// ❌ BAD — lógica duplicada na tool
+async ({ query }) => { /* embed + qdrant aqui */ }
+
+// ✅ GOOD
+async (args) => {
+  const result = await executeSearchByText(args);
+  return { content: [{ type: "text", text: JSON.stringify(result) }] };
+}
+```
+
+Docs: `docs/mcp.md` · Skill: `mcp-tools`
