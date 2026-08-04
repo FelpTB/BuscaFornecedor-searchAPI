@@ -12,7 +12,7 @@
 | [supabase-users.md](supabase-users.md) | Estrutura de usuários (auth.users, comprador, fornecedor) |
 | [workers.md](workers.md) | Telemetria async planejada (BullMQ) |
 | [support-apis.md](support-apis.md) | Inventário das APIs de suporte (cidades, Qdrant Request, MCP site, searchAPI) |
-| [xray.md](xray.md) | Pré-proxy agente Microsoft / harness de teste |
+| [xray.md](xray.md) | Chat conversacional X-Ray / pré-proxy Microsoft |
 | [PLANO_ESCALAVEL.md](PLANO_ESCALAVEL.md) | Roadmap por fases deste repo |
 | [GUIA_IMPLEMENTACAO.md](GUIA_IMPLEMENTACAO.md) | Visão-alvo de longo prazo (não = código atual) |
 

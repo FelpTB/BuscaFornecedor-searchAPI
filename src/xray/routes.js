@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { getSearchXrayHtml } from "./xrayHtml.js";
 import { runAgentSearch, runManualToolCall } from "./searchAgent.js";
+import { runChatTurn, resetChatSession } from "./conversationalAgent.js";
 import { fetchCitiesNearby, getCitiesApiBase } from "../clients/citiesApi.js";
 import { executeSearchByText, getPublicConfig } from "../searchService.js";
 import { logError, logSuccess } from "../logger.js";
 
 /**
- * Rotas X-Ray — harness / pré-proxy Microsoft + Query Manager + Cities API.
+ * Rotas X-Ray — chat conversacional + Query Manager + Cities + probes.
  */
 export function createXrayRouter() {
   const router = Router();
@@ -34,6 +35,59 @@ export function createXrayRouter() {
     }
   });
 
+  /** Chat multi-turn (modo principal). */
+  router.post("/search/xray/chat", async (req, res, next) => {
+    const message =
+      typeof req.body?.message === "string"
+        ? req.body.message.trim()
+        : typeof req.body?.query === "string"
+          ? req.body.query.trim()
+          : "";
+    if (!message) {
+      return res.status(400).json({ error: "Campo 'message' é obrigatório" });
+    }
+
+    const final_limit = req.body?.final_limit != null ? Number(req.body.final_limit) : 10;
+
+    try {
+      const out = await runChatTurn({
+        session_id: req.body?.session_id,
+        message,
+        config: getPublicConfig(),
+        executeSearchByText,
+        final_limit: Number.isInteger(final_limit) && final_limit >= 1 ? final_limit : 10,
+        debug: req.body?.debug === true,
+        rerank: req.body?.rerank === true,
+      });
+
+      logSuccess("POST /search/xray/chat", "Chat X-Ray turno", {
+        session_id: out.session_id,
+        message_preview: message.slice(0, 80),
+        actions: out.actions?.map((a) => a.tool),
+        intent: out.intent,
+        search_id: out.search?.search_id,
+        results: out.search?.results?.length ?? 0,
+        agent_ms: out.duration_ms,
+      });
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      return res.json(out);
+    } catch (err) {
+      const status = err.status ?? err.statusCode ?? 500;
+      logError("POST /search/xray/chat", "Chat X-Ray falhou", err, { status });
+      return next(err);
+    }
+  });
+
+  router.post("/search/xray/chat/reset", (req, res) => {
+    const out = resetChatSession(req.body?.session_id);
+    logSuccess("POST /search/xray/chat/reset", "Sessão de chat resetada", {
+      session_id: out.session_id,
+    });
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    return res.json(out);
+  });
+
+  /** One-shot legado (compat). */
   router.post("/search/xray/run", async (req, res, next) => {
     const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
     if (!query) {
@@ -92,7 +146,6 @@ export function createXrayRouter() {
     try {
       let args = req.body?.arguments ?? req.body;
 
-      // Opcional: expandir cidade+raio no tool manual
       const cityName =
         typeof req.body?.city_name === "string" ? req.body.city_name.trim() : "";
       if (cityName && args && typeof args === "object") {

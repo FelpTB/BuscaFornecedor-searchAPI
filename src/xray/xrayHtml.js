@@ -1,6 +1,6 @@
 /**
- * X-Ray UI — pré-proxy de agente Microsoft (Copilot + MCP).
- * Testa health, config, search_text (agente NL e tool call manual).
+ * X-Ray UI — chat conversacional (pré-proxy Microsoft Copilot + MCP).
+ * Modo principal: conversa NL multi-turn. Secundários: tool manual + probes.
  */
 export function getSearchXrayHtml() {
   return `<!DOCTYPE html>
@@ -8,100 +8,191 @@ export function getSearchXrayHtml() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>X-Ray · Pré-proxy MCP (Microsoft)</title>
+  <title>X-Ray · Chat BuscaFornecedor</title>
   <style>
     :root {
       --bg: #0f1419; --panel: #1a2332; --panel-2: #243044; --border: #3d4f66;
       --text: #e7ecf3; --muted: #8b9bb4; --accent: #3b82f6; --accent-2: #2563eb;
       --ok: #34d399; --warn: #fbbf24; --err: #f87171;
-      --ms: #00a4ef; --mono: "Cascadia Code","Fira Code",ui-monospace,monospace;
+      --ms: #00a4ef; --user: #1e3a5f; --bot: #243044;
+      --mono: "Cascadia Code","Fira Code",ui-monospace,monospace;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.45; }
-    header { border-bottom: 1px solid var(--border); padding: 1rem 1.25rem; background: linear-gradient(120deg,#0f172a 0%,#1e3a5f 55%,#0f1419 100%); }
-    header h1 { margin: 0; font-size: 1.2rem; }
-    header p { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.88rem; max-width: 920px; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.45;
+      display: flex; flex-direction: column; min-height: 100vh;
+    }
+    header {
+      border-bottom: 1px solid var(--border); padding: 0.85rem 1.25rem;
+      background: linear-gradient(120deg,#0f172a 0%,#1e3a5f 55%,#0f1419 100%);
+      flex: 0 0 auto;
+    }
+    header h1 { margin: 0; font-size: 1.15rem; }
+    header p { margin: 0.3rem 0 0; color: var(--muted); font-size: 0.85rem; max-width: 960px; }
     .ms { color: var(--ms); font-weight: 700; }
-    .wrap { max-width: 1180px; margin: 0 auto; padding: 1rem 1.25rem 2.5rem; }
-    .mode-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.85rem; }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 0.75rem 1.25rem 1.5rem; width: 100%; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    .auth-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.65rem; flex: 0 0 auto; }
+    .auth-row input { flex: 1 1 200px; }
+    .mode-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.75rem; flex: 0 0 auto; }
     .mode-tabs button {
-      padding: 0.45rem 0.85rem; border-radius: 8px; border: 1px solid var(--border);
+      padding: 0.4rem 0.8rem; border-radius: 8px; border: 1px solid var(--border);
       background: var(--panel); color: var(--muted); font-weight: 650; cursor: pointer;
     }
     .mode-tabs button.active { color: #fff; border-color: var(--ms); background: color-mix(in srgb, var(--ms) 22%, var(--panel)); }
-    .panel-mode { display: none; }
-    .panel-mode.active { display: block; }
-    .search-bar, .manual-bar {
-      display: flex; gap: 0.6rem; flex-wrap: wrap; background: var(--panel);
-      border: 1px solid var(--border); border-radius: 10px; padding: 0.85rem;
-    }
+    .panel-mode { display: none; flex: 1; min-height: 0; flex-direction: column; }
+    .panel-mode.active { display: flex; }
     input[type="text"], input[type="password"], textarea, select {
-      padding: 0.7rem 0.85rem; border-radius: 8px; border: 1px solid var(--border);
+      padding: 0.65rem 0.8rem; border-radius: 8px; border: 1px solid var(--border);
       background: var(--panel-2); color: var(--text); font-size: 0.95rem;
     }
-    .search-bar input[type="text"] { flex: 1 1 280px; min-width: 200px; }
-    textarea { width: 100%; min-height: 220px; font-family: var(--mono); font-size: 0.78rem; resize: vertical; }
+    textarea { width: 100%; font-family: inherit; resize: none; }
     button.primary {
-      padding: 0.7rem 1.1rem; border: none; border-radius: 8px;
+      padding: 0.65rem 1rem; border: none; border-radius: 8px;
       background: var(--accent); color: #fff; font-weight: 650; cursor: pointer;
     }
     button.primary:hover { background: var(--accent-2); }
     button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
     button.ghost {
-      padding: 0.45rem 0.75rem; border-radius: 8px; border: 1px solid var(--border);
+      padding: 0.4rem 0.7rem; border-radius: 8px; border: 1px solid var(--border);
       background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 0.82rem;
     }
-    .hint { color: var(--muted); font-size: 0.82rem; margin: 0.45rem 0 0; }
-    .error { color: var(--err); font-size: 0.9rem; margin-top: 0.5rem; }
-    .grid { display: grid; gap: 1rem; margin-top: 1rem; }
-    @media (min-width: 900px) { .grid.two { grid-template-columns: 1fr 1fr; align-items: start; } }
-    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
-    .card h2 { margin: 0 0 0.75rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 700; }
-    .badge { display: inline-flex; padding: 0.15rem 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 650; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+    .hint { color: var(--muted); font-size: 0.82rem; margin: 0.35rem 0 0; }
+    .error { color: var(--err); font-size: 0.9rem; margin-top: 0.4rem; }
+    .badge {
+      display: inline-flex; padding: 0.15rem 0.45rem; border-radius: 999px;
+      font-size: 0.72rem; font-weight: 650; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+    }
     .badge.ok { color: var(--ok); }
     .badge.err { color: var(--err); }
     .badge.warn { color: var(--warn); }
-    .meta { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0; }
-    .reasoning, .probe-out {
-      background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
-      padding: 0.75rem; font-size: 0.9rem; white-space: pre-wrap;
+
+    /* Chat layout */
+    .chat-layout {
+      display: grid; gap: 0.85rem; flex: 1; min-height: 0;
+      grid-template-columns: 1fr;
     }
+    @media (min-width: 960px) {
+      .chat-layout { grid-template-columns: minmax(320px, 1.05fr) minmax(300px, 0.95fr); }
+    }
+    .chat-pane, .side-pane {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+    }
+    .chat-pane { min-height: 420px; }
+    .side-pane { min-height: 320px; }
+    .pane-head {
+      padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+    }
+    .pane-head h2 {
+      margin: 0; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--muted); font-weight: 700;
+    }
+    .thread {
+      flex: 1; overflow: auto; padding: 1rem 0.9rem; display: flex; flex-direction: column; gap: 0.75rem;
+      background: #121820;
+    }
+    .bubble {
+      max-width: 92%; padding: 0.7rem 0.85rem; border-radius: 12px;
+      white-space: pre-wrap; word-break: break-word; font-size: 0.92rem;
+    }
+    .bubble.user {
+      align-self: flex-end; background: var(--user); border: 1px solid #2d4a73;
+      border-bottom-right-radius: 4px;
+    }
+    .bubble.assistant {
+      align-self: flex-start; background: var(--bot); border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+    .bubble .who {
+      display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--muted); margin-bottom: 0.25rem; font-weight: 700;
+    }
+    .bubble.typing { color: var(--muted); font-style: italic; }
+    .composer {
+      border-top: 1px solid var(--border); padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;
+      background: var(--panel);
+    }
+    .composer-row { display: flex; gap: 0.5rem; align-items: flex-end; }
+    .composer textarea { flex: 1; min-height: 52px; max-height: 140px; }
+    .opts { display: flex; gap: 0.65rem; align-items: center; flex-wrap: wrap; }
+    .opts label { font-size: 0.8rem; color: var(--muted); display: flex; gap: 0.3rem; align-items: center; }
+    .opts input[type="number"] {
+      width: 68px; padding: 0.25rem 0.35rem; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+    }
+    .welcome {
+      margin: auto; text-align: center; color: var(--muted); max-width: 340px; padding: 1.5rem;
+    }
+    .welcome strong { color: var(--text); display: block; margin-bottom: 0.4rem; font-size: 1rem; }
+    .suggestions { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; margin-top: 0.85rem; }
+    .suggestions button {
+      font-size: 0.78rem; padding: 0.35rem 0.6rem; border-radius: 999px;
+      border: 1px dashed var(--border); background: transparent; color: var(--muted); cursor: pointer;
+    }
+    .suggestions button:hover { border-style: solid; color: var(--text); border-color: var(--ms); }
+
+    .side-body { flex: 1; overflow: auto; padding: 0.75rem; display: flex; flex-direction: column; gap: 0.75rem; }
+    .card-inner h3 {
+      margin: 0 0 0.45rem; font-size: 0.72rem; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--muted);
+    }
+    .tabs { display: flex; gap: 0.3rem; margin-bottom: 0.45rem; flex-wrap: wrap; }
+    .tabs button {
+      padding: 0.3rem 0.55rem; font-size: 0.72rem; font-weight: 600;
+      background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+      border-radius: 6px; cursor: pointer;
+    }
+    .tabs button.active { color: #fff; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, var(--panel-2)); }
     .xray {
-      font-family: var(--mono); font-size: 0.74rem; background: #0a0e14; border: 1px solid var(--border);
-      border-radius: 8px; padding: 0.75rem; overflow: auto; max-height: 480px;
+      font-family: var(--mono); font-size: 0.72rem; background: #0a0e14; border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.65rem; overflow: auto; max-height: 220px;
       white-space: pre-wrap; word-break: break-word; color: #c9d1d9; margin: 0;
     }
-    .tabs { display: flex; gap: 0.35rem; margin-bottom: 0.55rem; flex-wrap: wrap; }
-    .tabs button { padding: 0.35rem 0.65rem; font-size: 0.78rem; font-weight: 600; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
-    .tabs button.active { color: #fff; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, var(--panel-2)); }
-    .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.65rem; }
-    .chip { font-family: var(--mono); font-size: 0.72rem; background: #0a0e14; border: 1px solid var(--border); border-radius: 6px; padding: 0.25rem 0.45rem; color: var(--muted); }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+    .chip {
+      font-family: var(--mono); font-size: 0.68rem; background: #0a0e14;
+      border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.4rem; color: var(--muted);
+    }
     .chip b { color: var(--text); }
-    .result { border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin-bottom: 0.65rem; background: var(--panel-2); }
-    .result .top { display: flex; justify-content: space-between; gap: 0.75rem; align-items: baseline; }
-    .result h3 { margin: 0; font-size: 1rem; }
-    .result .score { color: var(--accent); font-family: var(--mono); font-size: 0.85rem; }
-    .scores { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.5rem 0; }
-    .scores span { font-family: var(--mono); font-size: 0.7rem; background: #0a0e14; border: 1px solid var(--border); border-radius: 4px; padding: 0.15rem 0.35rem; color: var(--muted); }
-    .payload { font-size: 0.82rem; color: var(--muted); display: grid; gap: 0.2rem; }
+    .meta { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+    .result {
+      border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem;
+      margin-bottom: 0.5rem; background: var(--panel-2);
+    }
+    .result .top { display: flex; justify-content: space-between; gap: 0.5rem; align-items: baseline; }
+    .result h3 { margin: 0; font-size: 0.92rem; text-transform: none; letter-spacing: 0; color: var(--text); }
+    .result .score { color: var(--accent); font-family: var(--mono); font-size: 0.8rem; }
+    .scores { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.4rem 0; }
+    .scores span {
+      font-family: var(--mono); font-size: 0.65rem; background: #0a0e14;
+      border: 1px solid var(--border); border-radius: 4px; padding: 0.12rem 0.3rem; color: var(--muted);
+    }
+    .payload { font-size: 0.8rem; color: var(--muted); display: grid; gap: 0.15rem; }
     .payload b { color: var(--text); font-weight: 600; }
-    .opts { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.55rem; }
-    .opts label { font-size: 0.85rem; color: var(--muted); display: flex; gap: 0.35rem; align-items: center; }
-    .opts input[type="number"] { width: 72px; padding: 0.3rem 0.4rem; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); }
-    .step { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; font-size: 0.82rem; color: var(--muted); }
-    .step.on { color: var(--ok); }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
-    .step.on .dot { background: var(--ok); }
-    .auth-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.75rem; }
-    .auth-row input { flex: 1 1 220px; }
+
+    .manual-bar {
+      display: flex; flex-direction: column; gap: 0.5rem; background: var(--panel);
+      border: 1px solid var(--border); border-radius: 10px; padding: 0.85rem; flex: 1;
+    }
+    .manual-bar textarea { min-height: 240px; font-family: var(--mono); font-size: 0.78rem; }
     .probe-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 1rem;
+    }
+    .card h2 {
+      margin: 0 0 0.75rem; font-size: 0.75rem; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--muted); font-weight: 700;
+    }
   </style>
 </head>
 <body>
   <header>
-    <div class="wrap" style="padding-top:0;padding-bottom:0">
-      <h1>X-Ray · Query Manager → <span class="ms">MCP / Microsoft</span></h1>
-      <p>Pré-proxy do Query Manager B2B: classifica PRODUTO/SERVIÇO/MISTO, aplica <b>pesos fixos</b>, BM25 discriminante e <code>Modelo_Negocio</code>, depois chama a tool MCP <code>search_text</code> desta API.</p>
+    <div class="wrap" style="padding-top:0;padding-bottom:0;flex:none">
+      <h1>X-Ray · Chat → <span class="ms">MCP / Microsoft</span></h1>
+      <p>Conversa em linguagem natural: o agente esclarece o briefing, decide quando buscar, aplica Query Manager + filtro regional e mostra o X-Ray técnico ao lado.</p>
     </div>
   </header>
 
@@ -114,89 +205,119 @@ export function getSearchXrayHtml() {
     </div>
 
     <div class="mode-tabs">
-      <button type="button" class="active" data-mode="agent">1 · Query Manager (NL)</button>
+      <button type="button" class="active" data-mode="chat">1 · Conversa</button>
       <button type="button" data-mode="manual">2 · Tool call manual</button>
-      <button type="button" data-mode="probe">3 · Probes (health/config/tools)</button>
+      <button type="button" data-mode="probe">3 · Probes</button>
     </div>
 
-    <div id="mode-agent" class="panel-mode active">
-      <form id="formAgent" class="search-bar">
-        <input type="text" id="query" placeholder="Ex.: instalação de energia solar em SP para condomínios" required autocomplete="off">
-        <button type="submit" class="primary" id="btnAgent">Rodar agente</button>
-      </form>
-      <div class="opts">
-        <label>final_limit <input type="number" id="final_limit" min="1" max="100" value="10"></label>
-        <label>cidade <input type="text" id="geoCity" placeholder="ex.: Campinas" style="width:140px"></label>
-        <label>UF <input type="text" id="geoUf" placeholder="SP" maxlength="2" style="width:48px"></label>
-        <label>raio km <input type="number" id="geoRadius" min="1" max="500" value="50" style="width:72px"></label>
-        <label><input type="checkbox" id="forceDebug"> debug</label>
-        <label><input type="checkbox" id="forceRerank"> forçar rerank</label>
+    <div id="mode-chat" class="panel-mode active">
+      <div class="chat-layout">
+        <section class="chat-pane">
+          <div class="pane-head">
+            <h2>Conversa</h2>
+            <div style="display:flex;gap:0.4rem;align-items:center">
+              <span class="badge" id="sessionBadge">sessão…</span>
+              <button type="button" class="ghost" id="btnNewChat">Nova conversa</button>
+            </div>
+          </div>
+          <div class="thread" id="thread">
+            <div class="welcome" id="welcome">
+              <strong>Como posso ajudar na busca?</strong>
+              Descreva o que precisa — produto, serviço, região, tipo de fornecedor. Posso perguntar o que faltar antes de buscar.
+              <div class="suggestions">
+                <button type="button" data-suggest="Procuro fabricantes de embalagens plásticas em Campinas com raio de 50 km">Embalagens · Campinas</button>
+                <button type="button" data-suggest="Preciso de instalação de energia solar para condomínios em SP">Energia solar · SP</button>
+                <button type="button" data-suggest="Quero limpeza industrial, mas ainda não sei a cidade">Limpeza · explorar</button>
+              </div>
+            </div>
+          </div>
+          <form class="composer" id="formChat">
+            <div class="opts">
+              <label>final_limit <input type="number" id="final_limit" min="1" max="100" value="10"></label>
+              <label><input type="checkbox" id="forceDebug"> debug</label>
+              <label><input type="checkbox" id="forceRerank"> rerank</label>
+            </div>
+            <div class="composer-row">
+              <textarea id="message" rows="2" placeholder="Ex.: preciso de caroço de açaí seco perto de Belém…" required></textarea>
+              <button type="submit" class="primary" id="btnSend">Enviar</button>
+            </div>
+            <p class="hint">O agente usa tools internas (busca, cidades, config). Refine a qualquer momento: “só Fabricante”, “aumenta o raio”, “quero 20”.</p>
+          </form>
+        </section>
+
+        <aside class="side-pane">
+          <div class="pane-head">
+            <h2>X-Ray · última busca</h2>
+            <div class="meta" id="statusMeta"></div>
+          </div>
+          <div class="side-body">
+            <div class="card-inner">
+              <h3>Ações do turno</h3>
+              <div class="chips" id="actionChips"><span class="hint">Aguardando conversa…</span></div>
+            </div>
+            <div class="card-inner">
+              <h3>Parâmetros</h3>
+              <div class="chips" id="paramChips"></div>
+            </div>
+            <div class="card-inner">
+              <div class="tabs" id="xrayTabs">
+                <button type="button" class="active" data-tab="tool">mcp_tool_call</button>
+                <button type="button" data-tab="qm">query_manager</button>
+                <button type="button" data-tab="geo">geo</button>
+                <button type="button" data-tab="weights">weights</button>
+                <button type="button" data-tab="meta">meta</button>
+                <button type="button" data-tab="raw">raw</button>
+              </div>
+              <pre class="xray" id="xray">Sem busca nesta sessão ainda.</pre>
+            </div>
+            <div class="card-inner">
+              <h3>Resultados <span id="resultsCount" class="badge">0</span></h3>
+              <div id="results"><p class="hint">Os fornecedores da última busca aparecem aqui.</p></div>
+            </div>
+          </div>
+        </aside>
       </div>
-      <p class="hint">Geo: se preencher cidade (ou o QM extrair da NL), a API-busca-cidades monta <code>filter.cidade = [lista no raio]</code>.</p>
+      <div id="formError" class="error"></div>
     </div>
 
     <div id="mode-manual" class="panel-mode">
-      <div class="manual-bar" style="flex-direction:column;align-items:stretch">
-        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem">
+      <div class="manual-bar">
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
           <button type="button" class="ghost" id="btnFillTemplate">Preencher template</button>
           <button type="button" class="ghost" id="btnFromLast">Usar último tool call</button>
           <button type="button" class="primary" id="btnManual">Executar search_text</button>
         </div>
         <textarea id="manualJson" spellcheck="false"></textarea>
-        <p class="hint">JSON = arguments da tool MCP search_text (query, weights, filter, filter_not, bm25, limits, rerank, debug).</p>
+        <p class="hint">JSON = arguments da tool MCP search_text.</p>
+        <div id="manualError" class="error"></div>
       </div>
     </div>
 
     <div id="mode-probe" class="panel-mode">
-      <div class="card">
+      <div class="card" style="flex:1;overflow:auto">
         <h2>Probes REST / contrato MCP</h2>
         <div class="probe-actions">
           <button type="button" class="ghost" data-probe="health">GET /health</button>
           <button type="button" class="ghost" data-probe="config">GET /config</button>
           <button type="button" class="ghost" data-probe="tools">Contrato tools MCP</button>
           <button type="button" class="ghost" data-probe="cities">GET cities nearby</button>
+          <button type="button" class="ghost" data-probe="chatTools">Tools do chat</button>
         </div>
-        <pre class="xray" id="probeOut">Clique em um probe…</pre>
+        <pre class="xray" id="probeOut" style="max-height:none">Clique em um probe…</pre>
       </div>
     </div>
-
-    <div id="formError" class="error"></div>
-
-    <div class="grid two" id="agentPanels">
-      <section class="card">
-        <h2>Pipeline (simulação Microsoft)</h2>
-        <div class="step" id="s1"><span class="dot"></span> 1. Pedido do usuário / tool call</div>
-        <div class="step" id="s2"><span class="dot"></span> 2. Query Manager (intent + BM25 discriminante)</div>
-        <div class="step" id="s3"><span class="dot"></span> 3. API executa (mesmo núcleo REST/MCP)</div>
-        <div class="step" id="s4"><span class="dot"></span> 4. Resultados + X-Ray</div>
-        <h2 style="margin-top:1rem">Raciocínio</h2>
-        <div class="reasoning" id="reasoning">Aguardando…</div>
-        <div class="chips" id="paramChips"></div>
-      </section>
-      <section class="card">
-        <h2>X-Ray · tool call MCP</h2>
-        <div class="tabs" id="xrayTabs">
-          <button type="button" class="active" data-tab="tool">mcp_tool_call</button>
-          <button type="button" data-tab="qm">query_manager</button>
-          <button type="button" data-tab="weights">weights</button>
-          <button type="button" data-tab="queries">queries / filters</button>
-          <button type="button" data-tab="geo">geo / cidades</button>
-          <button type="button" data-tab="meta">meta</button>
-          <button type="button" data-tab="raw">resposta completa</button>
-        </div>
-        <pre class="xray" id="xray">Aguardando…</pre>
-        <div class="meta" id="statusMeta"></div>
-      </section>
-    </div>
-
-    <section class="card" style="margin-top:1rem" id="resultsCard">
-      <h2>Resultados <span id="resultsCount" class="badge">0</span></h2>
-      <div id="results"></div>
-    </section>
   </div>
 
   <script>
-    const state = { config: null, last: null, tab: "tool", mode: "agent" };
+    const SESSION_KEY = "xray_chat_session_id";
+    const state = {
+      config: null,
+      last: null,
+      tab: "tool",
+      mode: "chat",
+      sessionId: localStorage.getItem(SESSION_KEY) || null,
+      messages: [],
+    };
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
       "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
@@ -212,14 +333,70 @@ export function getSearchXrayHtml() {
       return h;
     }
 
-    function setSteps(n) {
-      for (let i = 1; i <= 4; i++) $("s" + i).classList.toggle("on", i <= n);
-    }
-
     function setMode(mode) {
       state.mode = mode;
-      document.querySelectorAll(".mode-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
-      document.querySelectorAll(".panel-mode").forEach((p) => p.classList.toggle("active", p.id === "mode-" + mode));
+      document.querySelectorAll(".mode-tabs button").forEach((b) =>
+        b.classList.toggle("active", b.dataset.mode === mode));
+      document.querySelectorAll(".panel-mode").forEach((p) =>
+        p.classList.toggle("active", p.id === "mode-" + mode));
+    }
+
+    function updateSessionBadge() {
+      $("sessionBadge").textContent = state.sessionId
+        ? ("sessão " + state.sessionId.slice(0, 8) + "…")
+        : "nova sessão";
+    }
+
+    const WELCOME_HTML =
+      '<div class="welcome" id="welcome">' +
+        '<strong>Como posso ajudar na busca?</strong>' +
+        'Descreva o que precisa — produto, serviço, região, tipo de fornecedor. Posso perguntar o que faltar antes de buscar.' +
+        '<div class="suggestions">' +
+          '<button type="button" data-suggest="Procuro fabricantes de embalagens plásticas em Campinas com raio de 50 km">Embalagens · Campinas</button>' +
+          '<button type="button" data-suggest="Preciso de instalação de energia solar para condomínios em SP">Energia solar · SP</button>' +
+          '<button type="button" data-suggest="Quero limpeza industrial, mas ainda não sei a cidade">Limpeza · explorar</button>' +
+        '</div></div>';
+
+    function renderThread() {
+      const thread = $("thread");
+      const msgs = state.messages || [];
+      if (!msgs.length) {
+        thread.innerHTML = WELCOME_HTML;
+        bindSuggestions();
+        return;
+      }
+      thread.innerHTML = msgs.map((m) =>
+        '<div class="bubble ' + esc(m.role) + '">' +
+          '<span class="who">' + (m.role === "user" ? "Você" : "Agente") + '</span>' +
+          esc(m.content) +
+        '</div>'
+      ).join("");
+      thread.scrollTop = thread.scrollHeight;
+    }
+
+    function bindSuggestions() {
+      document.querySelectorAll("[data-suggest]").forEach((b) => {
+        b.addEventListener("click", () => {
+          $("message").value = b.dataset.suggest;
+          $("message").focus();
+        });
+      });
+    }
+
+    function showTyping() {
+      const thread = $("thread");
+      const welcome = $("welcome");
+      if (welcome) welcome.remove();
+      const el = document.createElement("div");
+      el.className = "bubble assistant typing";
+      el.id = "typing";
+      el.innerHTML = '<span class="who">Agente</span>Pensando…';
+      thread.appendChild(el);
+      thread.scrollTop = thread.scrollHeight;
+    }
+
+    function hideTyping() {
+      $("typing")?.remove();
     }
 
     function renderChips(args) {
@@ -229,29 +406,37 @@ export function getSearchXrayHtml() {
         chips.push("<span class='chip'><b>" + esc(k) + "</b> " + Number(v).toFixed(3) + "</span>");
       if (args.bm25_query) chips.push("<span class='chip'><b>bm25</b> " + esc(args.bm25_query) + "</span>");
       if (args.filter) chips.push("<span class='chip'><b>filter</b> " + esc(JSON.stringify(args.filter)) + "</span>");
-      if (args.filter_not) chips.push("<span class='chip'><b>filter_not</b> " + esc(JSON.stringify(args.filter_not)) + "</span>");
       if (args.rerank) chips.push("<span class='chip'><b>rerank</b> on</span>");
-      if (args.debug) chips.push("<span class='chip'><b>debug</b> on</span>");
-      $("paramChips").innerHTML = chips.join("");
+      $("paramChips").innerHTML = chips.join("") || "<span class='hint'>—</span>";
+    }
+
+    function renderActions(actions) {
+      if (!actions?.length) {
+        $("actionChips").innerHTML = "<span class='hint'>Nenhuma tool neste turno (só conversa)</span>";
+        return;
+      }
+      $("actionChips").innerHTML = actions.map((a) => {
+        let extra = "";
+        if (a.tool === "search_suppliers")
+          extra = " · " + (a.result_count ?? 0) + " results" + (a.intent ? " · " + a.intent : "");
+        if (a.tool === "lookup_cities")
+          extra = " · " + (a.cities ?? 0) + " cidades";
+        return "<span class='chip'><b>" + esc(a.tool) + "</b>" + esc(extra) + "</span>";
+      }).join("");
     }
 
     function renderXray() {
       const d = state.last;
-      if (!d) { $("xray").textContent = "Aguardando…"; return; }
+      if (!d || !d.mcp_tool_call) {
+        $("xray").textContent = "Sem busca nesta sessão ainda.";
+        return;
+      }
       const args = d.mcp_tool_call?.arguments || {};
       const map = {
         tool: d.mcp_tool_call,
-        qm: d.query_manager || { note: "só no modo Agente (Query Manager)" },
-        geo: d.geo || { note: "sem filtro regional nesta execução" },
+        qm: d.query_manager || null,
+        geo: d.geo || null,
         weights: args.weights || {},
-        queries: {
-          query: args.query,
-          queries: args.queries || null,
-          bm25_query: args.bm25_query ?? null,
-          bm25: args.bm25,
-          filter: args.filter || null,
-          filter_not: args.filter_not || null,
-        },
         meta: {
           simulation: d.simulation,
           intent: d.intent,
@@ -259,11 +444,8 @@ export function getSearchXrayHtml() {
           duration_ms: d.duration_ms,
           search_duration_ms: d.search_duration_ms,
           tokens_used: d.tokens_used,
-          user_query: d.user_query,
+          actions: d.actions,
           search_id: d.search?.search_id,
-          latency_ms: d.search?.latency_ms,
-          embedding_model: d.search?.embedding_model,
-          embedding_dims: d.search?.embedding_dims,
         },
         raw: d,
       };
@@ -274,7 +456,7 @@ export function getSearchXrayHtml() {
       const results = payload?.results || [];
       $("resultsCount").textContent = String(results.length);
       if (!results.length) {
-        $("results").innerHTML = "<p class='hint'>Nenhum resultado.</p>";
+        $("results").innerHTML = "<p class='hint'>Nenhum resultado nesta busca.</p>";
         return;
       }
       $("results").innerHTML = results.map((r) => {
@@ -284,39 +466,34 @@ export function getSearchXrayHtml() {
         return (
           '<article class="result"><div class="top">' +
             '<h3>' + esc(r.posicao) + ". " + esc(p.nome_empresa || r.id) + '</h3>' +
-            '<div class="score">final ' + Number(r.score_final ?? 0).toFixed(4) +
-            (r.score_rrf != null ? ' · rrf ' + Number(r.score_rrf).toFixed(4) : '') + '</div></div>' +
+            '<div class="score">final ' + Number(r.score_final ?? 0).toFixed(4) + '</div></div>' +
             '<div class="scores">' + scores + '</div>' +
             '<div class="payload">' +
               '<div><b>CNPJ</b> ' + esc(p.cnpj || "—") + ' · <b>UF</b> ' + esc(p.uf || "—") +
               ' · <b>Cidade</b> ' + esc(p.cidade || "—") + '</div>' +
               '<div><b>Modelo</b> ' + esc(p.modelo_negocio || "—") + '</div>' +
-              '<div><b>Descrição</b> ' + esc((p.descricao || "").slice(0, 280)) +
-              ((p.descricao || "").length > 280 ? "…" : "") + '</div></div></article>'
+              '<div><b>Descrição</b> ' + esc((p.descricao || "").slice(0, 220)) +
+              ((p.descricao || "").length > 220 ? "…" : "") + '</div></div></article>'
         );
       }).join("");
     }
 
-    function showRun(data, opts = {}) {
+    function showSearchSide(data) {
+      if (!data?.mcp_tool_call && !data?.search) return;
       state.last = data;
-      setSteps(4);
-      $("reasoning").textContent = data.reasoning || opts.reasoning || "(tool call manual — sem reasoning LLM)";
       renderChips(data.mcp_tool_call?.arguments);
-      state.tab = "tool";
-      document.querySelectorAll("#xrayTabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === "tool"));
       renderXray();
-      renderResults(data.search);
+      if (data.search) renderResults(data.search);
       $("statusMeta").innerHTML =
-        '<span class="badge ok">' + esc(data.mcp_tool_call?.name || "search_text") + '</span>' +
         (data.intent ? '<span class="badge warn">intent ' + esc(data.intent) + '</span>' : '') +
         (data.geo?.cities_in_filter != null
           ? '<span class="badge ok">cidades ' + esc(data.geo.cities_in_filter) + '</span>'
           : '') +
         (data.model ? '<span class="badge">' + esc(data.model) + '</span>' : '') +
-        (data.duration_ms != null ? '<span class="badge">agent ' + esc(data.duration_ms) + ' ms</span>' : '') +
-        '<span class="badge">search ' + esc(data.search_duration_ms) + ' ms</span>' +
-        (data.search?.search_id ? '<span class="badge">id ' + esc(data.search.search_id.slice(0, 8)) + '…</span>' : '') +
-        '<span class="badge">' + (data.search?.results?.length || 0) + ' results</span>';
+        (data.duration_ms != null ? '<span class="badge">turn ' + esc(data.duration_ms) + ' ms</span>' : '') +
+        (data.search?.search_id
+          ? '<span class="badge">id ' + esc(data.search.search_id.slice(0, 8)) + '…</span>'
+          : '');
     }
 
     async function loadConfig() {
@@ -345,7 +522,6 @@ export function getSearchXrayHtml() {
         queries: Object.fromEntries(dims.map((d) => [d, "energia solar"])),
         weights: w,
         filter: { uf: "SP" },
-        filter_not: {},
         bm25: true,
         bm25_query: "energia solar fotovoltaica",
         limit_per_vector: 50,
@@ -355,60 +531,90 @@ export function getSearchXrayHtml() {
       };
     }
 
-    async function runAgent(e) {
+    async function sendChat(e) {
       e.preventDefault();
       $("formError").textContent = "";
-      $("statusMeta").innerHTML = "";
-      const btn = $("btnAgent");
+      const message = $("message").value.trim();
+      if (!message) return;
+
+      const btn = $("btnSend");
       btn.disabled = true;
-      btn.textContent = "Agente pensando…";
-      setSteps(1);
-      $("reasoning").textContent = "Planejando tool call MCP (estilo Copilot)…";
+      $("message").value = "";
+
+      // Optimistic user bubble
+      state.messages = [...(state.messages || []), { role: "user", content: message }];
+      renderThread();
+      showTyping();
+
       try {
-        setSteps(2);
-        const body = {
-          query: $("query").value.trim(),
-          final_limit: Number($("final_limit").value) || 10,
-          debug: $("forceDebug").checked,
-          rerank: $("forceRerank").checked,
-        };
-        const city = ($("geoCity").value || "").trim();
-        const uf = ($("geoUf").value || "").trim();
-        const radius = $("geoRadius").value;
-        if (city) {
-          body.city_name = city;
-          if (uf) body.uf = uf;
-          if (radius !== "") body.radius_km = Number(radius);
-        }
-        const res = await fetch("/search/xray/run", {
+        const res = await fetch("/search/xray/chat", {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            session_id: state.sessionId,
+            message,
+            final_limit: Number($("final_limit").value) || 10,
+            debug: $("forceDebug").checked,
+            rerank: $("forceRerank").checked,
+          }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-        setSteps(3);
-        showRun(data);
+
+        state.sessionId = data.session_id;
+        localStorage.setItem(SESSION_KEY, data.session_id);
+        updateSessionBadge();
+        state.messages = data.messages || [];
+        hideTyping();
+        renderThread();
+        renderActions(data.actions);
+        if (data.search || data.mcp_tool_call) showSearchSide(data);
       } catch (err) {
-        setSteps(1);
+        hideTyping();
+        state.messages = state.messages.slice(0, -1);
+        renderThread();
         $("formError").textContent = err.message || String(err);
-        $("statusMeta").innerHTML = '<span class="badge err">erro</span>';
+        $("message").value = message;
       } finally {
         btn.disabled = false;
-        btn.textContent = "Rodar agente";
+        $("message").focus();
+      }
+    }
+
+    async function newChat() {
+      $("formError").textContent = "";
+      try {
+        const res = await fetch("/search/xray/chat/reset", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ session_id: state.sessionId }),
+        });
+        const data = await res.json();
+        state.sessionId = data.session_id;
+        localStorage.setItem(SESSION_KEY, data.session_id);
+        state.messages = [];
+        state.last = null;
+        updateSessionBadge();
+        renderThread();
+        renderActions([]);
+        $("paramChips").innerHTML = "";
+        $("xray").textContent = "Sem busca nesta sessão ainda.";
+        $("results").innerHTML = "<p class='hint'>Os fornecedores da última busca aparecem aqui.</p>";
+        $("resultsCount").textContent = "0";
+        $("statusMeta").innerHTML = "";
+        $("message").focus();
+      } catch (err) {
+        $("formError").textContent = err.message || String(err);
       }
     }
 
     async function runManual() {
-      $("formError").textContent = "";
+      $("manualError").textContent = "";
       let args;
       try { args = JSON.parse($("manualJson").value); }
-      catch { $("formError").textContent = "JSON inválido no editor"; return; }
+      catch { $("manualError").textContent = "JSON inválido"; return; }
       $("btnManual").disabled = true;
-      setSteps(1);
-      $("reasoning").textContent = "Tool call manual (sem LLM)…";
       try {
-        setSteps(3);
         const res = await fetch("/search/xray/tool", {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
@@ -416,10 +622,15 @@ export function getSearchXrayHtml() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-        showRun(data, { reasoning: "Execução direta da tool search_text (prévia de cliente MCP sem NL)." });
+        showSearchSide({
+          ...data,
+          reasoning: "Tool call manual",
+          actions: [{ tool: "search_text (manual)" }],
+        });
+        renderActions([{ tool: "search_text (manual)", result_count: data.search?.results?.length }]);
+        setMode("chat");
       } catch (err) {
-        setSteps(1);
-        $("formError").textContent = err.message || String(err);
+        $("manualError").textContent = err.message || String(err);
       } finally {
         $("btnManual").disabled = false;
       }
@@ -439,13 +650,10 @@ export function getSearchXrayHtml() {
           return;
         }
         if (kind === "cities") {
-          const city = ($("geoCity").value || "").trim() || "Campinas";
-          const uf = ($("geoUf").value || "").trim() || "SP";
-          const radius = $("geoRadius").value || "50";
           const qs = new URLSearchParams({
-            city_name: city,
-            uf,
-            radius_km: String(radius),
+            city_name: "Campinas",
+            uf: "SP",
+            radius_km: "50",
           });
           const res = await fetch("/search/xray/cities/nearby?" + qs.toString(), {
             headers: authHeaders(),
@@ -455,9 +663,20 @@ export function getSearchXrayHtml() {
           $("probeOut").textContent = JSON.stringify({
             total_found: data.total_found,
             cities_in_filter: data.city_names?.length,
-            truncated: data.truncated,
             city_names: data.city_names,
             center_city: data.center_city,
+          }, null, 2);
+          return;
+        }
+        if (kind === "chatTools") {
+          $("probeOut").textContent = JSON.stringify({
+            endpoint: "POST /search/xray/chat",
+            tools: [
+              "get_search_config",
+              "lookup_cities",
+              "search_suppliers → Query Manager → filter.cidade list → search_text",
+            ],
+            reset: "POST /search/xray/chat/reset",
           }, null, 2);
           return;
         }
@@ -466,11 +685,10 @@ export function getSearchXrayHtml() {
           $("probeOut").textContent = JSON.stringify({
             mcp_endpoint: cfg?.mcp?.endpoint || "/mcp",
             tools: [
-              { name: "get_config", mirrors: "GET /config", input: {} },
-              { name: "search_text", mirrors: "POST /search/text", input_from: "schemas/searchText.js" },
+              { name: "get_config", mirrors: "GET /config" },
+              { name: "search_text", mirrors: "POST /search/text" },
             ],
             auth: cfg?.auth,
-            note: "No Microsoft: cliente MCP Streamable HTTP chama as mesmas tools.",
           }, null, 2);
         }
       } catch (err) {
@@ -479,28 +697,40 @@ export function getSearchXrayHtml() {
       }
     }
 
-    document.querySelectorAll(".mode-tabs button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+    document.querySelectorAll(".mode-tabs button").forEach((b) =>
+      b.addEventListener("click", () => setMode(b.dataset.mode)));
     document.querySelectorAll("#xrayTabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
         state.tab = btn.dataset.tab;
-        document.querySelectorAll("#xrayTabs button").forEach((b) => b.classList.toggle("active", b === btn));
+        document.querySelectorAll("#xrayTabs button").forEach((b) =>
+          b.classList.toggle("active", b === btn));
         renderXray();
       });
     });
-    document.querySelectorAll("[data-probe]").forEach((b) => b.addEventListener("click", () => runProbe(b.dataset.probe)));
-    $("formAgent").addEventListener("submit", runAgent);
+    document.querySelectorAll("[data-probe]").forEach((b) =>
+      b.addEventListener("click", () => runProbe(b.dataset.probe)));
+    $("formChat").addEventListener("submit", sendChat);
+    $("btnNewChat").addEventListener("click", newChat);
     $("btnManual").addEventListener("click", runManual);
     $("btnFillTemplate").addEventListener("click", () => {
       $("manualJson").value = JSON.stringify(templateArgs(), null, 2);
     });
     $("btnFromLast").addEventListener("click", () => {
       const args = state.last?.mcp_tool_call?.arguments;
-      if (!args) { $("formError").textContent = "Nenhum tool call ainda"; return; }
+      if (!args) { $("manualError").textContent = "Nenhum tool call ainda"; return; }
       $("manualJson").value = JSON.stringify(args, null, 2);
       setMode("manual");
     });
+    $("message").addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        $("formChat").requestSubmit();
+      }
+    });
     $("apiKey").addEventListener("change", () => loadConfig().catch(() => {}));
 
+    updateSessionBadge();
+    bindSuggestions();
     loadConfig()
       .then(() => { $("manualJson").value = JSON.stringify(templateArgs(), null, 2); })
       .catch((err) => {

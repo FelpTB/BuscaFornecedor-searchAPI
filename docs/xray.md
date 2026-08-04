@@ -1,49 +1,84 @@
-# X-Ray — pré-proxy Microsoft (Copilot + MCP)
+# X-Ray — chat conversacional (pré-proxy Microsoft)
 
-UI de teste embutida nesta API: [`/search/xray`](../src/xray/).
+UI embutida: [`/search/xray`](../src/xray/).
 
 ## Papel
 
-Simula o **Query Manager B2B** (prompt de engenharia de busca) + bridge para MCP:
+Aba de **conversa multi-turn**: o usuário guia o agente em linguagem natural. O agente pode clarificar, refinar filtros e só então buscar fornecedores.
 
-1. Classifica intent: `PRODUTO` | `SERVICO` | `MISTO`
-2. Aplica **pesos fixos** (servidor — LLM não inventa pesos):
-   - `bm25=0.20`, `descricao=0.15`, `publico=0.03`, `cliente=0.02`
-   - Núcleo 0.60: produto/serviço conforme intent
-3. Gera textos por dimensão + **BM25 discriminante**
-4. `Modelo_Negocio` → `filter.modelo_negocio`
-5. **Geo (opcional):** cidade + UF + raio → API-busca-cidades → `filter.cidade = [lista de nomes]`
-6. Executa `search_text` (mesmo núcleo REST/MCP)
+Pipeline quando busca:
 
-Painel X-Ray: abas `mcp_tool_call`, `query_manager`, `geo / cidades`, `weights`, `queries/filters`, `meta`.
+1. Classifica intent: `PRODUTO` | `SERVICO` | `MISTO` (Query Manager)
+2. Pesos fixos (servidor)
+3. BM25 discriminante + `Modelo_Negocio`
+4. Geo opcional → API-busca-cidades → `filter.cidade = [lista]`
+5. Executa `search_text` (mesmo núcleo REST/MCP)
+6. Responde em NL resumindo resultados
 
-### Regional
+## Tools do chat
 
-- UI: campos cidade / UF / raio km
-- Ou NL: o QM extrai `cidade_centro`, `uf`, `radius_km`
-- Probe: `GET /search/xray/cities/nearby?city_name=Campinas&uf=SP&radius_km=50`
-- Env: `CITIES_API_URL` (default Railway da API-busca-cidades)
+| Tool | Função |
+|------|--------|
+| `search_suppliers` | Briefing NL → QM + cities + `search_text` |
+| `lookup_cities` | Confirma cobertura do raio |
+| `get_search_config` | Espelho de `/config` |
 
+Sessões em memória (`src/xray/chatSessions.js`), TTL ~60 min. `session_id` fica no `localStorage` da UI.
 
 ## Endpoints
 
 | Método | Path | Descrição |
 |--------|------|-----------|
-| GET | `/search/xray` | UI HTML |
-| POST | `/search/xray/run` | Agente NL → `search_text` |
+| GET | `/search/xray` | UI HTML (chat) |
+| POST | `/search/xray/chat` | Turno conversacional |
+| POST | `/search/xray/chat/reset` | Nova sessão |
+| POST | `/search/xray/run` | One-shot legado (compat) |
 | POST | `/search/xray/tool` | Tool call manual (JSON) |
+| GET | `/search/xray/cities/nearby` | Probe cidades |
 
-Body `/run`: `{ "query": "...", "final_limit": 10, "debug": false, "rerank": false }`  
-Body `/tool`: `{ "arguments": { "query": "...", "weights": {...}, "filter": {...}, ... } }`
+### Body `/chat`
+
+```json
+{
+  "session_id": "uuid-opcional",
+  "message": "Procuro embalagens em Campinas, raio 40km",
+  "final_limit": 10,
+  "debug": false,
+  "rerank": false
+}
+```
+
+### Resposta (resumo)
+
+```json
+{
+  "session_id": "...",
+  "reply": "texto para o usuário",
+  "messages": [{ "role": "user|assistant", "content": "..." }],
+  "actions": [{ "tool": "search_suppliers", "result_count": 10 }],
+  "mcp_tool_call": { "name": "search_text", "arguments": {} },
+  "search": { "results": [] },
+  "query_manager": {},
+  "geo": {}
+}
+```
 
 ## Modos na UI
 
-1. **Agente (NL → MCP)** — planejamento LLM + busca  
-2. **Tool call manual** — testa filtros/pesos/BM25/rerank/debug sem LLM  
-3. **Probes** — `/health`, `/config`, contrato das tools MCP  
+1. **Conversa** — chat + painel X-Ray (última busca) + resultados  
+2. **Tool call manual** — JSON direto em `search_text`  
+3. **Probes** — health, config, cities, contrato MCP  
 
-Campo opcional de API key na UI quando `AUTH_MODE=api_key`.
+## Env
+
+| Variável | Default | Uso |
+|----------|---------|-----|
+| `CITIES_API_URL` | Railway cities | Expansão geo |
+| `XRAY_CHAT_TTL_MS` | 3600000 | TTL sessão |
+| `XRAY_CHAT_MAX_MESSAGES` | 40 | Cap histórico |
+| `XRAY_CHAT_MAX_TOOL_ROUNDS` | 4 | Loop tool calling |
+| `LLM_CHAT_AGENT_MODEL` | `gpt-4o-mini` | Modelo do chat |
 
 ## Railway
 
-Após deploy, abra `https://<dominio>/search/xray`. Healthcheck continua em `/health` (inclui `search_xray` no JSON).
+Após deploy: `https://<dominio>/search/xray`.

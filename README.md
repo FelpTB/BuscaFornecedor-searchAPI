@@ -7,7 +7,7 @@ Base inicial da API de busca de fornecedores (Qdrant + OpenAI), com o mesmo núc
 | `POST /search/text` (texto + pesos + filtros + BM25) | Auth Supabase JWT |
 | `GET /config`, `GET /health` | Cotas / telemetria |
 | `POST/GET/DELETE /mcp` (tools `search_text`, `get_config`) | Busca regional (cidades) |
-| `GET /search/xray` — pré-proxy agente Microsoft | Hub Copilot produção |
+| `GET /search/xray` — chat conversacional (pré-proxy Microsoft) | Hub Copilot produção |
 
 Todo endpoint de negócio deve ter **tool MCP correspondente** (mesmo serviço compartilhado).
 

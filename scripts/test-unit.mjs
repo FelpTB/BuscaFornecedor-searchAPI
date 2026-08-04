@@ -10,6 +10,14 @@ import {
   resolveGeoRequest,
   QM_FIXED,
 } from "../src/xray/searchAgent.js";
+import { CHAT_TOOLS } from "../src/xray/conversationalAgent.js";
+import {
+  getOrCreateSession,
+  resetSession,
+  setSessionMessages,
+  publicMessages,
+  _clearAllSessionsForTests,
+} from "../src/xray/chatSessions.js";
 
 process.env.AUTH_MODE = "off";
 process.env.QDRANT_DIMENSION_KEYS =
@@ -143,6 +151,36 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.deepEqual(regional.toolArguments.filter.cidade, ["Campinas", "Valinhos", "Sumaré"]);
   assert.equal(regional.query_manager.geo.cities_in_filter, 3);
   console.log("OK regional city list filter");
+}
+
+{
+  const names = CHAT_TOOLS.map((t) => t.function.name).sort();
+  assert.deepEqual(names, ["get_search_config", "lookup_cities", "search_suppliers"]);
+  const searchTool = CHAT_TOOLS.find((t) => t.function.name === "search_suppliers");
+  assert.ok(searchTool.function.parameters.required.includes("briefing"));
+  console.log("OK chat tool schemas");
+}
+
+{
+  _clearAllSessionsForTests();
+  const a = getOrCreateSession(null);
+  assert.ok(a.id);
+  const b = getOrCreateSession(a.id);
+  assert.equal(b.id, a.id);
+  setSessionMessages(a, [
+    { role: "user", content: "oi" },
+    { role: "assistant", content: "olá", tool_calls: [{ id: "1" }] },
+    { role: "tool", tool_call_id: "1", content: "{}" },
+    { role: "assistant", content: "pronto" },
+  ]);
+  const pub = publicMessages(a);
+  assert.equal(pub.length, 3);
+  assert.equal(pub[0].role, "user");
+  assert.ok(!pub.some((m) => m.role === "tool"));
+  const fresh = resetSession(a.id);
+  assert.notEqual(fresh.id, a.id);
+  assert.equal(fresh.messages.length, 0);
+  console.log("OK chat sessions");
 }
 
 console.log("\nAll unit checks passed.");
