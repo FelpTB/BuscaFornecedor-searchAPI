@@ -1,8 +1,10 @@
 import OpenAI from "openai";
+import { fetchCitiesNearby } from "../clients/citiesApi.js";
 
 /**
  * Pré-proxy X-Ray = Query Manager B2B + bridge para tool MCP search_text.
  * Pesos fixos e regras BM25 discriminantes — alinhado ao prompt de produção.
+ * Geo: API-busca-cidades → filter.cidade = lista de nomes.
  */
 
 const MODEL = process.env.LLM_SEARCH_AGENT_MODEL || process.env.LLM_RERANK_MODEL || "gpt-4o-mini";
@@ -174,7 +176,12 @@ DIRETRIZES DE CONTEÚDO (ANTI-ERRO)
 
 5) Modelo_Negocio: EXATAMENTE um de ${JSON.stringify(MODELO_NEGOCIO_ALLOWED)}.
 
-6) Filtros geo (uf/cidade): só se o usuário mencionar explicitamente; senão omita.
+6) GEO / RAIO (regional):
+   - Se o usuário mencionar cidade e/ou raio (ex.: "em Campinas", "raio 50km", "região de Curitiba/PR"), preencha:
+     cidade_centro, uf (se souber), radius_km (número; default 50 se houver cidade sem raio).
+   - Se NÃO houver indicação geográfica, cidade_centro/uf/radius_km = null.
+   - O servidor chamará a API de cidades e montará filter.cidade = [lista de nomes no raio].
+   - NÃO invente a lista de cidades vizinhas — só o centro + raio.
 
 7) PROIBIDO explicar fora do JSON. Retorne APENAS JSON.
 
@@ -190,8 +197,9 @@ SCHEMA DE SAÍDA
   "clientes": "string",
   "bm25": "APENAS termos discriminantes (sem genérico compartilhado)",
   "Modelo_Negocio": "um dos valores permitidos",
-  "uf": "UF se explícita ou null",
-  "cidade": "cidade se explícita ou null",
+  "cidade_centro": "string|null",
+  "uf": "UF 2 letras|null",
+  "radius_km": "number|null",
   "rerank": false,
   "debug": false
 }`;
@@ -199,6 +207,9 @@ SCHEMA DE SAÍDA
 
 /**
  * Converte saída do Query Manager → arguments da tool search_text.
+ * @param {object} qm
+ * @param {object} config
+ * @param {{ userQuery?: string, final_limit?: number, debug?: boolean, rerank?: boolean, cityNames?: string[]|null, geoMeta?: object|null }} [options]
  */
 export function mapQueryManagerToToolArgs(qm, config, options = {}) {
   const dimMap = resolveDimMap(config.dimension_keys);
@@ -226,8 +237,22 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
   const filter = {};
   const modelo = pickModeloNegocio(qm.Modelo_Negocio ?? qm.modelo_negocio);
   if (modelo) filter.modelo_negocio = modelo;
-  if (typeof qm.uf === "string" && qm.uf.trim()) filter.uf = qm.uf.trim().toUpperCase();
-  if (typeof qm.cidade === "string" && qm.cidade.trim()) filter.cidade = qm.cidade.trim();
+
+  // Lista regional tem prioridade sobre cidade/uf unitários
+  const cityNames = Array.isArray(options.cityNames)
+    ? options.cityNames.filter((n) => typeof n === "string" && n.trim())
+    : null;
+
+  if (cityNames && cityNames.length > 0) {
+    filter.cidade = cityNames.length === 1 ? cityNames[0] : cityNames;
+  } else {
+    if (typeof qm.uf === "string" && qm.uf.trim()) filter.uf = qm.uf.trim().toUpperCase();
+    const singleCity =
+      (typeof qm.cidade_centro === "string" && qm.cidade_centro.trim()) ||
+      (typeof qm.cidade === "string" && qm.cidade.trim()) ||
+      null;
+    if (singleCity) filter.cidade = singleCity;
+  }
 
   const toolArguments = {
     query,
@@ -266,18 +291,58 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
       clientes: qm.clientes ?? null,
       bm25: qm.bm25 ?? null,
       Modelo_Negocio: modelo,
+      cidade_centro: qm.cidade_centro ?? qm.cidade ?? null,
+      uf: qm.uf ?? null,
+      radius_km: qm.radius_km ?? null,
       peso_produtos: weights[dimMap.produto],
       peso_servicos: weights[dimMap.servico],
       peso_descricao: weights[dimMap.descricao],
       peso_publico: weights[dimMap.publico],
       peso_clientes: weights[dimMap.cliente],
       peso_bm25: includeBm25 ? weights.bm25 : 0,
+      geo: options.geoMeta || null,
     },
   };
 }
 
 /**
+ * Resolve geo: UI explícita tem prioridade; senão campos do QM.
+ * @returns {{ city_name: string, uf: string|null, radius_km: number }|null}
+ */
+export function resolveGeoRequest(qm = {}, geoFromUi = {}) {
+  const uiName =
+    typeof geoFromUi.city_name === "string" ? geoFromUi.city_name.trim() : "";
+  const qmName =
+    (typeof qm.cidade_centro === "string" && qm.cidade_centro.trim()) ||
+    (typeof qm.cidade === "string" && qm.cidade.trim()) ||
+    "";
+
+  const city_name = uiName || qmName;
+  if (!city_name) return null;
+
+  const ufRaw =
+    (typeof geoFromUi.uf === "string" && geoFromUi.uf.trim()) ||
+    (typeof qm.uf === "string" && qm.uf.trim()) ||
+    "";
+  const uf = ufRaw ? ufRaw.toUpperCase() : null;
+
+  let radius_km =
+    geoFromUi.radius_km != null && geoFromUi.radius_km !== ""
+      ? Number(geoFromUi.radius_km)
+      : qm.radius_km != null && qm.radius_km !== ""
+        ? Number(qm.radius_km)
+        : 50;
+
+  if (!Number.isFinite(radius_km) || radius_km <= 0) radius_km = 50;
+
+  return { city_name, uf, radius_km };
+}
+
+/**
  * Planeja via Query Manager e monta tool call MCP search_text.
+ * @param {string} userQuery
+ * @param {object} config
+ * @param {{ final_limit?: number, debug?: boolean, rerank?: boolean, geo?: { city_name?: string, uf?: string, radius_km?: number } }} [options]
  */
 export async function planSearchToolCall(userQuery, config, options = {}) {
   const query = typeof userQuery === "string" ? userQuery.trim() : "";
@@ -315,10 +380,50 @@ export async function planSearchToolCall(userQuery, config, options = {}) {
     throw err;
   }
 
+  // Geo: UI explícita ou extraído pelo QM → API cidades → lista para filter.cidade
+  let cityNames = null;
+  let geoMeta = null;
+  const geoReq = resolveGeoRequest(qm, options.geo || {});
+  if (geoReq) {
+    try {
+      const nearby = await fetchCitiesNearby(geoReq);
+      cityNames = nearby.city_names;
+      geoMeta = {
+        city_name: geoReq.city_name,
+        uf: geoReq.uf,
+        radius_km: nearby.radius_km,
+        total_found: nearby.total_found,
+        cities_in_filter: cityNames.length,
+        truncated: nearby.truncated,
+        center_city: nearby.center_city,
+        city_names_sample: cityNames.slice(0, 15),
+        cities_api: nearby.source,
+      };
+    } catch (geoErr) {
+      geoMeta = {
+        city_name: geoReq.city_name,
+        uf: geoReq.uf,
+        radius_km: geoReq.radius_km,
+        error: geoErr.message || String(geoErr),
+        status: geoErr.status,
+      };
+      // Fallback: filtra só a cidade centro se a API falhar
+      cityNames = [geoReq.city_name];
+    }
+  }
+
   const mapped = mapQueryManagerToToolArgs(qm, config, {
     ...options,
     userQuery: query,
+    cityNames,
+    geoMeta,
   });
+
+  const geoNote = geoMeta
+    ? geoMeta.error
+      ? ` · geo falhou (${geoMeta.error}); filtro só "${geoMeta.city_name}"`
+      : ` · regional ${geoMeta.city_name}${geoMeta.uf ? "/" + geoMeta.uf : ""} ${geoMeta.radius_km}km → ${geoMeta.cities_in_filter} cidades`
+    : "";
 
   return {
     model: MODEL,
@@ -331,18 +436,19 @@ export async function planSearchToolCall(userQuery, config, options = {}) {
         }
       : null,
     reasoning:
-      typeof qm.reasoning === "string"
-        ? qm.reasoning
-        : `Query Manager · intent ${mapped.intent} · pesos fixos aplicados no servidor`,
+      (typeof qm.reasoning === "string" ? qm.reasoning : `Query Manager · intent ${mapped.intent}`) +
+      geoNote,
     user_query: query,
     intent: mapped.intent,
     query_manager: mapped.query_manager,
+    geo: geoMeta,
     simulation: {
       client: "query-manager → microsoft-copilot-mcp-preview",
-      role: "Query Manager B2B Hybrid Retrieval",
-      tools_available: ["get_config", "search_text"],
+      role: "Query Manager B2B Hybrid Retrieval + Cities API",
+      tools_available: ["get_config", "search_text", "cities_nearby (HTTP)"],
       transport: "same-process (X-Ray) → produção usará Streamable HTTP /mcp",
       weights_policy: "fixed-by-intent (PRODUTO|SERVICO|MISTO)",
+      regional_filter: Boolean(cityNames?.length),
     },
     mcp_tool_call: {
       name: "search_text",
@@ -359,11 +465,13 @@ export async function runAgentSearch({
   final_limit,
   debug,
   rerank,
+  geo,
 }) {
   const plan = await planSearchToolCall(userQuery, config, {
     final_limit,
     debug,
     rerank,
+    geo,
   });
   const searchStarted = Date.now();
   const search = await executeSearchByText(plan.mcp_tool_call.arguments, {

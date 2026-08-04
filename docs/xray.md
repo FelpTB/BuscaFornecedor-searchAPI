@@ -10,11 +10,19 @@ Simula o **Query Manager B2B** (prompt de engenharia de busca) + bridge para MCP
 2. Aplica **pesos fixos** (servidor — LLM não inventa pesos):
    - `bm25=0.20`, `descricao=0.15`, `publico=0.03`, `cliente=0.02`
    - Núcleo 0.60: produto/serviço conforme intent
-3. Gera textos por dimensão + **BM25 discriminante** (sem substantivo genérico compartilhado)
+3. Gera textos por dimensão + **BM25 discriminante**
 4. `Modelo_Negocio` → `filter.modelo_negocio`
-5. Executa `search_text` (mesmo núcleo REST/MCP)
+5. **Geo (opcional):** cidade + UF + raio → API-busca-cidades → `filter.cidade = [lista de nomes]`
+6. Executa `search_text` (mesmo núcleo REST/MCP)
 
-Painel X-Ray: abas `mcp_tool_call`, `query_manager`, `weights`, `queries/filters`, `meta`.
+Painel X-Ray: abas `mcp_tool_call`, `query_manager`, `geo / cidades`, `weights`, `queries/filters`, `meta`.
+
+### Regional
+
+- UI: campos cidade / UF / raio km
+- Ou NL: o QM extrai `cidade_centro`, `uf`, `radius_km`
+- Probe: `GET /search/xray/cities/nearby?city_name=Campinas&uf=SP&radius_km=50`
+- Env: `CITIES_API_URL` (default Railway da API-busca-cidades)
 
 
 ## Endpoints

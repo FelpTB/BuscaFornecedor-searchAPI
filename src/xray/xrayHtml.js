@@ -126,9 +126,13 @@ export function getSearchXrayHtml() {
       </form>
       <div class="opts">
         <label>final_limit <input type="number" id="final_limit" min="1" max="100" value="10"></label>
+        <label>cidade <input type="text" id="geoCity" placeholder="ex.: Campinas" style="width:140px"></label>
+        <label>UF <input type="text" id="geoUf" placeholder="SP" maxlength="2" style="width:48px"></label>
+        <label>raio km <input type="number" id="geoRadius" min="1" max="500" value="50" style="width:72px"></label>
         <label><input type="checkbox" id="forceDebug"> debug</label>
         <label><input type="checkbox" id="forceRerank"> forçar rerank</label>
       </div>
+      <p class="hint">Geo: se preencher cidade (ou o QM extrair da NL), a API-busca-cidades monta <code>filter.cidade = [lista no raio]</code>.</p>
     </div>
 
     <div id="mode-manual" class="panel-mode">
@@ -150,6 +154,7 @@ export function getSearchXrayHtml() {
           <button type="button" class="ghost" data-probe="health">GET /health</button>
           <button type="button" class="ghost" data-probe="config">GET /config</button>
           <button type="button" class="ghost" data-probe="tools">Contrato tools MCP</button>
+          <button type="button" class="ghost" data-probe="cities">GET cities nearby</button>
         </div>
         <pre class="xray" id="probeOut">Clique em um probe…</pre>
       </div>
@@ -175,6 +180,7 @@ export function getSearchXrayHtml() {
           <button type="button" data-tab="qm">query_manager</button>
           <button type="button" data-tab="weights">weights</button>
           <button type="button" data-tab="queries">queries / filters</button>
+          <button type="button" data-tab="geo">geo / cidades</button>
           <button type="button" data-tab="meta">meta</button>
           <button type="button" data-tab="raw">resposta completa</button>
         </div>
@@ -236,6 +242,7 @@ export function getSearchXrayHtml() {
       const map = {
         tool: d.mcp_tool_call,
         qm: d.query_manager || { note: "só no modo Agente (Query Manager)" },
+        geo: d.geo || { note: "sem filtro regional nesta execução" },
         weights: args.weights || {},
         queries: {
           query: args.query,
@@ -302,6 +309,9 @@ export function getSearchXrayHtml() {
       $("statusMeta").innerHTML =
         '<span class="badge ok">' + esc(data.mcp_tool_call?.name || "search_text") + '</span>' +
         (data.intent ? '<span class="badge warn">intent ' + esc(data.intent) + '</span>' : '') +
+        (data.geo?.cities_in_filter != null
+          ? '<span class="badge ok">cidades ' + esc(data.geo.cities_in_filter) + '</span>'
+          : '') +
         (data.model ? '<span class="badge">' + esc(data.model) + '</span>' : '') +
         (data.duration_ms != null ? '<span class="badge">agent ' + esc(data.duration_ms) + ' ms</span>' : '') +
         '<span class="badge">search ' + esc(data.search_duration_ms) + ' ms</span>' +
@@ -362,6 +372,14 @@ export function getSearchXrayHtml() {
           debug: $("forceDebug").checked,
           rerank: $("forceRerank").checked,
         };
+        const city = ($("geoCity").value || "").trim();
+        const uf = ($("geoUf").value || "").trim();
+        const radius = $("geoRadius").value;
+        if (city) {
+          body.city_name = city;
+          if (uf) body.uf = uf;
+          if (radius !== "") body.radius_km = Number(radius);
+        }
         const res = await fetch("/search/xray/run", {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
@@ -418,6 +436,29 @@ export function getSearchXrayHtml() {
         if (kind === "config") {
           await loadConfig();
           $("probeOut").textContent = JSON.stringify(state.config, null, 2);
+          return;
+        }
+        if (kind === "cities") {
+          const city = ($("geoCity").value || "").trim() || "Campinas";
+          const uf = ($("geoUf").value || "").trim() || "SP";
+          const radius = $("geoRadius").value || "50";
+          const qs = new URLSearchParams({
+            city_name: city,
+            uf,
+            radius_km: String(radius),
+          });
+          const res = await fetch("/search/xray/cities/nearby?" + qs.toString(), {
+            headers: authHeaders(),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+          $("probeOut").textContent = JSON.stringify({
+            total_found: data.total_found,
+            cities_in_filter: data.city_names?.length,
+            truncated: data.truncated,
+            city_names: data.city_names,
+            center_city: data.center_city,
+          }, null, 2);
           return;
         }
         if (kind === "tools") {

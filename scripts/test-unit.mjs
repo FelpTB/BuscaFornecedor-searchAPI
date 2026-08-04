@@ -7,6 +7,7 @@ import {
   buildFixedWeights,
   mapQueryManagerToToolArgs,
   resolveDimMap,
+  resolveGeoRequest,
   QM_FIXED,
 } from "../src/xray/searchAgent.js";
 
@@ -116,6 +117,32 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(mapped.toolArguments.bm25_query.includes("açaí"), false);
   assert.ok(mapped.toolArguments.queries.produto.includes("caroço"));
   console.log("OK Query Manager → search_text mapping");
+}
+
+{
+  const g = resolveGeoRequest(
+    { cidade_centro: "Campinas", uf: "SP", radius_km: 30 },
+    {},
+  );
+  assert.equal(g.city_name, "Campinas");
+  assert.equal(g.uf, "SP");
+  assert.equal(g.radius_km, 30);
+
+  const uiWins = resolveGeoRequest(
+    { cidade_centro: "Campinas", uf: "SP", radius_km: 30 },
+    { city_name: "São Paulo", uf: "SP", radius_km: 50 },
+  );
+  assert.equal(uiWins.city_name, "São Paulo");
+  assert.equal(uiWins.radius_km, 50);
+
+  const regional = mapQueryManagerToToolArgs(
+    { intent: "SERVICO", query_original: "limpeza", produtos: "x", servicos: "limpeza industrial", descricao: "d", publico: "p", clientes: "c", bm25: "limpeza industrial" },
+    { dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"], bm25: { vector_name: "bm25" } },
+    { cityNames: ["Campinas", "Valinhos", "Sumaré"], geoMeta: { cities_in_filter: 3 } },
+  );
+  assert.deepEqual(regional.toolArguments.filter.cidade, ["Campinas", "Valinhos", "Sumaré"]);
+  assert.equal(regional.query_manager.geo.cities_in_filter, 3);
+  console.log("OK regional city list filter");
 }
 
 console.log("\nAll unit checks passed.");
