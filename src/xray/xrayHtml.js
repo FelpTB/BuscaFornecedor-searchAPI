@@ -100,8 +100,8 @@ export function getSearchXrayHtml() {
 <body>
   <header>
     <div class="wrap" style="padding-top:0;padding-bottom:0">
-      <h1>X-Ray · Pré-proxy <span class="ms">Microsoft Copilot + MCP</span></h1>
-      <p>Simula o fluxo futuro: agente interpreta NL → monta tool call MCP (<code>search_text</code> / <code>get_config</code>) → esta API executa. Use para validar pesos, filtros, BM25, rerank e auth antes do ambiente Microsoft.</p>
+      <h1>X-Ray · Query Manager → <span class="ms">MCP / Microsoft</span></h1>
+      <p>Pré-proxy do Query Manager B2B: classifica PRODUTO/SERVIÇO/MISTO, aplica <b>pesos fixos</b>, BM25 discriminante e <code>Modelo_Negocio</code>, depois chama a tool MCP <code>search_text</code> desta API.</p>
     </div>
   </header>
 
@@ -114,7 +114,7 @@ export function getSearchXrayHtml() {
     </div>
 
     <div class="mode-tabs">
-      <button type="button" class="active" data-mode="agent">1 · Agente (NL → MCP)</button>
+      <button type="button" class="active" data-mode="agent">1 · Query Manager (NL)</button>
       <button type="button" data-mode="manual">2 · Tool call manual</button>
       <button type="button" data-mode="probe">3 · Probes (health/config/tools)</button>
     </div>
@@ -161,7 +161,7 @@ export function getSearchXrayHtml() {
       <section class="card">
         <h2>Pipeline (simulação Microsoft)</h2>
         <div class="step" id="s1"><span class="dot"></span> 1. Pedido do usuário / tool call</div>
-        <div class="step" id="s2"><span class="dot"></span> 2. Agente planeja MCP search_text</div>
+        <div class="step" id="s2"><span class="dot"></span> 2. Query Manager (intent + BM25 discriminante)</div>
         <div class="step" id="s3"><span class="dot"></span> 3. API executa (mesmo núcleo REST/MCP)</div>
         <div class="step" id="s4"><span class="dot"></span> 4. Resultados + X-Ray</div>
         <h2 style="margin-top:1rem">Raciocínio</h2>
@@ -172,6 +172,7 @@ export function getSearchXrayHtml() {
         <h2>X-Ray · tool call MCP</h2>
         <div class="tabs" id="xrayTabs">
           <button type="button" class="active" data-tab="tool">mcp_tool_call</button>
+          <button type="button" data-tab="qm">query_manager</button>
           <button type="button" data-tab="weights">weights</button>
           <button type="button" data-tab="queries">queries / filters</button>
           <button type="button" data-tab="meta">meta</button>
@@ -234,6 +235,7 @@ export function getSearchXrayHtml() {
       const args = d.mcp_tool_call?.arguments || {};
       const map = {
         tool: d.mcp_tool_call,
+        qm: d.query_manager || { note: "só no modo Agente (Query Manager)" },
         weights: args.weights || {},
         queries: {
           query: args.query,
@@ -245,6 +247,7 @@ export function getSearchXrayHtml() {
         },
         meta: {
           simulation: d.simulation,
+          intent: d.intent,
           model: d.model,
           duration_ms: d.duration_ms,
           search_duration_ms: d.search_duration_ms,
@@ -298,6 +301,7 @@ export function getSearchXrayHtml() {
       renderResults(data.search);
       $("statusMeta").innerHTML =
         '<span class="badge ok">' + esc(data.mcp_tool_call?.name || "search_text") + '</span>' +
+        (data.intent ? '<span class="badge warn">intent ' + esc(data.intent) + '</span>' : '') +
         (data.model ? '<span class="badge">' + esc(data.model) + '</span>' : '') +
         (data.duration_ms != null ? '<span class="badge">agent ' + esc(data.duration_ms) + ' ms</span>' : '') +
         '<span class="badge">search ' + esc(data.search_duration_ms) + ' ms</span>' +

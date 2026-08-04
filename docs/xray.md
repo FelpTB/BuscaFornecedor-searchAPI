@@ -4,14 +4,18 @@ UI de teste embutida nesta API: [`/search/xray`](../src/xray/).
 
 ## Papel
 
-Simula o fluxo que será usado no ambiente Microsoft:
+Simula o **Query Manager B2B** (prompt de engenharia de busca) + bridge para MCP:
 
-1. Usuário fala em linguagem natural (ou envia tool call manual)
-2. Agente LLM monta argumentos da tool MCP `search_text` (como um Copilot)
-3. A **mesma** lógica de `executeSearchByText` / tool MCP executa a busca
-4. Painel X-Ray mostra tool call, weights, filters, meta e resultados
+1. Classifica intent: `PRODUTO` | `SERVICO` | `MISTO`
+2. Aplica **pesos fixos** (servidor — LLM não inventa pesos):
+   - `bm25=0.20`, `descricao=0.15`, `publico=0.03`, `cliente=0.02`
+   - Núcleo 0.60: produto/serviço conforme intent
+3. Gera textos por dimensão + **BM25 discriminante** (sem substantivo genérico compartilhado)
+4. `Modelo_Negocio` → `filter.modelo_negocio`
+5. Executa `search_text` (mesmo núcleo REST/MCP)
 
-Não é o cliente Microsoft final — é o **pré-proxy** para validar a API antes da integração.
+Painel X-Ray: abas `mcp_tool_call`, `query_manager`, `weights`, `queries/filters`, `meta`.
+
 
 ## Endpoints
 

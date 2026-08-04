@@ -1,12 +1,14 @@
-/**
- * Smoke unitário sem Qdrant/OpenAI — schema + auth + env defaults.
- *   node scripts/test-unit.mjs
- */
 import assert from "node:assert/strict";
 import { parseSearchTextBody } from "../src/schemas/searchText.js";
 import { getDimensionKeys, getAuthMode, LIMITS } from "../src/config/env.js";
 import { resolveAuthContext, anonymousAuth } from "../src/middleware/auth.js";
 import { AppError } from "../src/errors/AppError.js";
+import {
+  buildFixedWeights,
+  mapQueryManagerToToolArgs,
+  resolveDimMap,
+  QM_FIXED,
+} from "../src/xray/searchAgent.js";
 
 process.env.AUTH_MODE = "off";
 process.env.QDRANT_DIMENSION_KEYS =
@@ -67,6 +69,53 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(ok.authenticated, true);
   console.log("OK auth api_key");
   process.env.AUTH_MODE = "off";
+}
+
+{
+  const dimMap = resolveDimMap(["produto", "servico", "descricao", "publico", "cliente"]);
+  const wP = buildFixedWeights("PRODUTO", dimMap, true);
+  const sumP = Object.values(wP).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(sumP - 1) < 1e-6, `sum=${sumP}`);
+  assert.equal(wP.produto, 0.45);
+  assert.equal(wP.servico, 0.15);
+  assert.equal(wP.bm25, QM_FIXED.bm25);
+
+  const wS = buildFixedWeights("SERVICO", dimMap, true);
+  assert.equal(wS.servico, 0.45);
+  assert.equal(wS.produto, 0.15);
+
+  const wM = buildFixedWeights("MISTO", dimMap, true);
+  assert.equal(wM.produto, 0.3);
+  assert.equal(wM.servico, 0.3);
+  console.log("OK Query Manager fixed weights");
+}
+
+{
+  const mapped = mapQueryManagerToToolArgs(
+    {
+      intent: "PRODUTO",
+      query_original: "caroço de açaí",
+      produtos: "caroço de açaí seco, semente de açaí",
+      servicos: "beneficiamento de caroço de açaí",
+      descricao: "biomassa",
+      publico: "indústrias",
+      clientes: "compradores",
+      bm25: "caroço caroços semente sementes biomassa",
+      Modelo_Negocio: "Fabricante",
+      uf: "PA",
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: "bm25_complete_profile" },
+    },
+    { final_limit: 10 },
+  );
+  assert.equal(mapped.intent, "PRODUTO");
+  assert.equal(mapped.toolArguments.filter.modelo_negocio, "Fabricante");
+  assert.equal(mapped.toolArguments.filter.uf, "PA");
+  assert.equal(mapped.toolArguments.bm25_query.includes("açaí"), false);
+  assert.ok(mapped.toolArguments.queries.produto.includes("caroço"));
+  console.log("OK Query Manager → search_text mapping");
 }
 
 console.log("\nAll unit checks passed.");

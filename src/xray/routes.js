@@ -40,21 +40,12 @@ export function createXrayRouter() {
         executeSearchByText,
         final_limit: Number.isInteger(final_limit) && final_limit >= 1 ? final_limit : 10,
         debug: req.body?.debug === true,
+        rerank: req.body?.rerank === true,
       });
 
-      // Override rerank se UI forçou
-      if (req.body?.rerank === true && out.mcp_tool_call?.arguments) {
-        out.mcp_tool_call.arguments.rerank = true;
-        const searchStarted = Date.now();
-        out.search = await executeSearchByText(out.mcp_tool_call.arguments, {
-          debug: out.mcp_tool_call.arguments.debug === true,
-          rerank: true,
-        });
-        out.search_duration_ms = Date.now() - searchStarted;
-      }
-
-      logSuccess("POST /search/xray/run", "Agente X-Ray (pré-proxy MCP) executado", {
+      logSuccess("POST /search/xray/run", "Query Manager X-Ray executado", {
         query_preview: query.slice(0, 80),
+        intent: out.intent,
         agent_ms: out.duration_ms,
         search_ms: out.search_duration_ms,
         search_id: out.search?.search_id,
