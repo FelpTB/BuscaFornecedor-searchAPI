@@ -13,6 +13,9 @@ import {
   setSessionLastSearch,
   publicMessages,
 } from "./chatSessions.js";
+import { registerBuyer, getProfile } from "../auth/registerBuyer.js";
+import { requireComprador } from "../config/env.js";
+import { isSupabaseConfigured } from "../db/supabaseAdmin.js";
 
 const MODEL =
   process.env.LLM_CHAT_AGENT_MODEL ||
@@ -49,18 +52,43 @@ export const CHAT_TOOLS = [
   {
     type: "function",
     function: {
-      name: "lookup_cities",
+      name: "get_my_profile",
       description:
-        "Consulta cidades no raio de uma cidade centro (API-busca-cidades). Use para confirmar cobertura regional antes de buscar, ou quando o usuário perguntar quais cidades entram no filtro.",
+        "Retorna o perfil do comprador autenticado (cotas, keys prefix). Use para saber se o usuário já tem conta.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "register_buyer",
+      description:
+        "Cria conta de comprador no Supabase + emite API key (mostrada 1x). Use quando o usuário quiser se cadastrar ou quando a busca exigir perfil e ele ainda não tiver. Peça nome, email, telefone opcional e empresa.",
       parameters: {
         type: "object",
         properties: {
-          city_name: { type: "string", description: "Cidade centro (obrigatório)" },
-          uf: { type: "string", description: "UF com 2 letras (opcional)" },
-          radius_km: {
-            type: "number",
-            description: "Raio em km (1–500). Default 50.",
-          },
+          email: { type: "string" },
+          nome: { type: "string" },
+          telefone: { type: "string" },
+          empresa_nome: { type: "string" },
+        },
+        required: ["email", "nome"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "lookup_cities",
+      description:
+        "Consulta cidades no raio de uma cidade centro (API-busca-cidades). Use para confirmar cobertura regional antes de buscar.",
+      parameters: {
+        type: "object",
+        properties: {
+          city_name: { type: "string" },
+          uf: { type: "string" },
+          radius_km: { type: "number" },
         },
         required: ["city_name"],
         additionalProperties: false,
@@ -72,28 +100,15 @@ export const CHAT_TOOLS = [
     function: {
       name: "search_suppliers",
       description:
-        "Executa a busca de fornecedores via Query Manager (intent, pesos fixos, BM25 discriminante) + filtro regional opcional. Use quando o briefing estiver claro o bastante (o que buscar + preferências). NÃO invente resultados — só esta tool retorna fornecedores reais.",
+        "Executa a busca de fornecedores via Query Manager. Requer perfil comprador quando REQUIRE_COMPRADOR=1. NÃO invente resultados.",
       parameters: {
         type: "object",
         properties: {
-          briefing: {
-            type: "string",
-            description:
-              "Pedido consolidado em linguagem natural (produto/serviço, atributos, público, modelo de negócio se houver).",
-          },
-          city_name: {
-            type: "string",
-            description: "Cidade centro para filtro regional (opcional)",
-          },
-          uf: { type: "string", description: "UF 2 letras (opcional)" },
-          radius_km: {
-            type: "number",
-            description: "Raio km se houver cidade (default 50)",
-          },
-          final_limit: {
-            type: "integer",
-            description: "Quantidade de resultados (1–100). Default da sessão/UI.",
-          },
+          briefing: { type: "string" },
+          city_name: { type: "string" },
+          uf: { type: "string" },
+          radius_km: { type: "number" },
+          final_limit: { type: "integer" },
           debug: { type: "boolean" },
           rerank: { type: "boolean" },
         },
@@ -104,24 +119,31 @@ export const CHAT_TOOLS = [
   },
 ];
 
-function buildSystemPrompt(config) {
+function buildSystemPrompt(config, auth) {
   const dims =
     (config?.dimension_keys || []).join(", ") ||
     "produto, servico, descricao, publico, cliente";
+  const authLine = auth?.authenticated
+    ? `Usuário autenticado (provider=${auth.provider}, userId=${auth.userId || "—"}${auth.comprador ? `, cotas ${auth.comprador.buscasRealizadas}/${auth.comprador.limiteBuscas}` : ", sem perfil comprador"}).`
+    : "Usuário NÃO autenticado. Se REQUIRE_COMPRADOR estiver ativo ou ele quiser histórico, oriente o cadastro (register_buyer) e peça para colar a API key no painel do X-Ray.";
+
   return `Você é o assistente conversacional do BuscaFornecedor (X-Ray / pré-proxy Microsoft MCP).
 
-Papel: consultor B2B de sourcing. Conversa em português do Brasil, tom claro e profissional.
+Papel: consultor B2B de sourcing. Conversa em português do Brasil.
+
+Identidade:
+${authLine}
+Supabase configurado: ${isSupabaseConfigured() ? "sim" : "não"}. REQUIRE_COMPRADOR=${requireComprador() ? "sim" : "não"}.
 
 Comportamento:
-1. Guie o usuário por linguagem natural — não é um formulário. Pode perguntar o que falta (o quê buscar, região, modelo Fabricante/Distribuidor/etc., quantidade de resultados).
-2. NÃO invente fornecedores, CNPJs, notas ou rankings. Só cite empresas que vieram de search_suppliers.
-3. Quando o briefing estiver suficiente, chame search_suppliers. Se faltar o essencial (o que buscar), peça clarificação em vez de buscar.
-4. Aceite refinamentos: "só Fabricante", "aumenta o raio", "troca para Curitiba", "quero 20 resultados" → nova busca com o contexto acumulado.
-5. Após uma busca, resuma em linguagem natural (top nomes, cidade/UF, modelo) e sugira próximos ajustes.
-6. Use lookup_cities se precisar explicar cobertura do raio; get_search_config só se for útil.
-7. Respostas curtas a médias; evite jargão interno (não mencione "Query Manager", "RRF", "tool call") na conversa com o usuário — a UI mostra o X-Ray técnico à parte.
+1. Guie por linguagem natural. Pode clarificar produto, região, modelo de negócio.
+2. Se precisar cadastrar: peça nome + email (+ telefone/empresa) e chame register_buyer. Mostre a API key UMA vez e diga para colar no campo "API key" do X-Ray e clicar em "Usar chave".
+3. NÃO invente fornecedores. Só cite resultados de search_suppliers.
+4. Busque quando o briefing estiver claro. Refinamentos geram nova busca.
+5. Após busca, resuma tops e sugira ajustes. Histórico/aparições gravam async no Supabase quando autenticado.
+6. Evite jargão interno (Query Manager, RRF) na conversa.
 
-Config da API: dimensões [${dims}]; BM25 ${config?.bm25?.vector_name ? "ativo" : "inativo"}; final_limit máx ${config?.limits?.final_limit_max ?? 100}.`;
+Config: dims [${dims}]; BM25 ${config?.bm25?.vector_name ? "on" : "off"}.`;
 }
 
 /** Resume resultados para o LLM (não o payload inteiro). */
@@ -180,7 +202,15 @@ function summarizeCitiesForLlm(nearby) {
  * @param {object} ctx
  */
 async function executeTool(name, args, ctx) {
-  const { config, executeSearchByText, defaults, onSearch, onCities } = ctx;
+  const {
+    config,
+    executeSearchByText,
+    defaults,
+    onSearch,
+    onCities,
+    auth,
+    assertCanSearch,
+  } = ctx;
 
   if (name === "get_search_config") {
     return {
@@ -188,8 +218,49 @@ async function executeTool(name, args, ctx) {
       bm25: config.bm25,
       limits: config.limits,
       auth: config.auth,
+      supabase: config.supabase,
       mcp: config.mcp,
     };
+  }
+
+  if (name === "get_my_profile") {
+    if (!auth?.userId) {
+      return {
+        ok: false,
+        authenticated: false,
+        hint: "Cole a API key no painel X-Ray ou cadastre-se com register_buyer",
+      };
+    }
+    try {
+      const profile = await getProfile(auth.userId);
+      return { ok: true, ...profile };
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
+  }
+
+  if (name === "register_buyer") {
+    try {
+      const out = await registerBuyer({
+        email: args.email,
+        nome: args.nome,
+        telefone: args.telefone,
+        empresa_nome: args.empresa_nome,
+        fonte: "X-Ray",
+        key_name: "xray-chat",
+      });
+      return {
+        ok: true,
+        user_id: out.user_id,
+        email: out.email,
+        comprador: out.comprador,
+        api_key: out.api_key,
+        next_step:
+          "Peça ao usuário para colar api_key.key no campo API key do X-Ray e clicar em Usar chave. Depois continue a busca.",
+      };
+    } catch (e) {
+      return { ok: false, error: e.message || String(e), status: e.status };
+    }
   }
 
   if (name === "lookup_cities") {
@@ -212,6 +283,19 @@ async function executeTool(name, args, ctx) {
   if (name === "search_suppliers") {
     const briefing = typeof args.briefing === "string" ? args.briefing.trim() : "";
     if (!briefing) return { ok: false, error: "briefing obrigatório" };
+
+    if (typeof assertCanSearch === "function") {
+      try {
+        assertCanSearch(auth || {});
+      } catch (e) {
+        return {
+          ok: false,
+          error: e.message || String(e),
+          status: e.status,
+          needs_register: e.status === 401 || e.status === 403,
+        };
+      }
+    }
 
     const geo = {};
     if (typeof args.city_name === "string" && args.city_name.trim()) {
@@ -263,6 +347,9 @@ export async function runChatTurn({
   final_limit = 10,
   debug = false,
   rerank = false,
+  auth = null,
+  assertCanSearch = null,
+  onSearchCompleted = null,
 }) {
   const text = typeof message === "string" ? message.trim() : "";
   if (!text) {
@@ -281,7 +368,7 @@ export async function runChatTurn({
   let lastCities = null;
 
   const openaiMessages = [
-    { role: "system", content: buildSystemPrompt(config) },
+    { role: "system", content: buildSystemPrompt(config, auth) },
     ...session.messages.filter((m) => m.role !== "system"),
     { role: "user", content: text },
   ];
@@ -289,6 +376,8 @@ export async function runChatTurn({
   const toolCtx = {
     config,
     executeSearchByText,
+    auth,
+    assertCanSearch,
     defaults: {
       final_limit:
         Number.isInteger(Number(final_limit)) && Number(final_limit) >= 1
@@ -313,6 +402,7 @@ export async function runChatTurn({
             }
           : null,
       });
+      onSearchCompleted?.(bundle);
     },
     onCities: (nearby) => {
       lastCities = nearby;
@@ -383,6 +473,12 @@ export async function runChatTurn({
       });
       if (name === "get_search_config") {
         actions.push({ tool: "get_search_config" });
+      }
+      if (name === "register_buyer") {
+        actions.push({ tool: "register_buyer" });
+      }
+      if (name === "get_my_profile") {
+        actions.push({ tool: "get_my_profile" });
       }
     }
   }

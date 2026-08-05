@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { parseSearchTextBody } from "../src/schemas/searchText.js";
 import { getDimensionKeys, getAuthMode, LIMITS } from "../src/config/env.js";
-import { resolveAuthContext, anonymousAuth } from "../src/middleware/auth.js";
+import { resolveAuthContext } from "../src/middleware/auth.js";
 import { AppError } from "../src/errors/AppError.js";
+import { hashApiKey, generateApiKey } from "../src/auth/apiKeyHash.js";
+import { summarizeResultsForStorage } from "../src/db/repositories/consultasRepo.js";
 import {
   buildFixedWeights,
   mapQueryManagerToToolArgs,
@@ -58,9 +60,9 @@ process.env.QDRANT_DIMENSION_KEYS =
 }
 
 {
-  assert.equal(getAuthMode(), "off");
-  const ctx = resolveAuthContext({});
-  assert.deepEqual(ctx.authenticated, anonymousAuth().authenticated);
+  process.env.AUTH_MODE = "off";
+  const ctx = await resolveAuthContext({});
+  assert.equal(ctx.authenticated, false);
   console.log("OK auth off passthrough");
 }
 
@@ -68,13 +70,13 @@ process.env.QDRANT_DIMENSION_KEYS =
   process.env.AUTH_MODE = "api_key";
   process.env.AUTH_API_KEYS = "sk_test_abc";
   try {
-    resolveAuthContext({});
+    await resolveAuthContext({});
     assert.fail("should throw");
   } catch (e) {
     assert.ok(e instanceof AppError);
     assert.equal(e.status, 401);
   }
-  const ok = resolveAuthContext({ authorization: "Bearer sk_test_abc" });
+  const ok = await resolveAuthContext({ authorization: "Bearer sk_test_abc" });
   assert.equal(ok.authenticated, true);
   console.log("OK auth api_key");
   process.env.AUTH_MODE = "off";
@@ -155,10 +157,26 @@ process.env.QDRANT_DIMENSION_KEYS =
 
 {
   const names = CHAT_TOOLS.map((t) => t.function.name).sort();
-  assert.deepEqual(names, ["get_search_config", "lookup_cities", "search_suppliers"]);
+  assert.ok(names.includes("register_buyer"));
+  assert.ok(names.includes("search_suppliers"));
+  assert.ok(names.includes("get_my_profile"));
+  assert.ok(names.includes("lookup_cities"));
+  assert.ok(names.includes("get_search_config"));
   const searchTool = CHAT_TOOLS.find((t) => t.function.name === "search_suppliers");
   assert.ok(searchTool.function.parameters.required.includes("briefing"));
   console.log("OK chat tool schemas");
+}
+
+{
+  const k = generateApiKey();
+  assert.ok(k.plaintext.startsWith("sk_bf_"));
+  assert.equal(hashApiKey(k.plaintext), k.key_hash);
+  const summary = summarizeResultsForStorage([
+    { posicao: 1, id: "a", score_final: 0.9, payload: { cnpj: "12.345", nome_empresa: "X", cidade: "SP", uf: "SP" } },
+  ]);
+  assert.equal(summary[0].nome_empresa, "X");
+  assert.equal(summary[0].cnpj, "12.345");
+  console.log("OK api key hash + results summary");
 }
 
 {

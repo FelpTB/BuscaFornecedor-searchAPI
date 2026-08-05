@@ -7,18 +7,14 @@ import { logError, logSuccess } from "../logger.js";
 
 /**
  * Monta MCP Streamable HTTP em /mcp (POST/GET/DELETE).
- * Auth alinhada ao REST via resolveAuthContext (AUTH_MODE).
- * Sessões in-memory — adequado a 1 instância Railway.
- *
- * @param {import("express").Express} app
- * @param {{ executeSearchByText: Function, getPublicConfig: Function }} deps
+ * Auth alinhada ao REST via resolveAuthContext (async).
  */
 export function mountMcp(app, deps) {
   const transports = Object.create(null);
 
-  const requireMcpAuth = (req, res) => {
+  const requireMcpAuth = async (req, res) => {
     try {
-      req.auth = resolveAuthContext(req.headers);
+      req.auth = await resolveAuthContext(req.headers);
       return true;
     } catch (err) {
       const status = err.status ?? 401;
@@ -35,7 +31,7 @@ export function mountMcp(app, deps) {
   };
 
   const mcpPostHandler = async (req, res) => {
-    if (!requireMcpAuth(req, res)) return;
+    if (!(await requireMcpAuth(req, res))) return;
 
     const sessionId = req.headers["mcp-session-id"];
 
@@ -94,7 +90,7 @@ export function mountMcp(app, deps) {
   };
 
   const mcpGetHandler = async (req, res) => {
-    if (!requireMcpAuth(req, res)) return;
+    if (!(await requireMcpAuth(req, res))) return;
     const sessionId = req.headers["mcp-session-id"];
     if (!sessionId || !transports[sessionId]) {
       res.status(400).send("Invalid or missing session ID");
@@ -109,7 +105,7 @@ export function mountMcp(app, deps) {
   };
 
   const mcpDeleteHandler = async (req, res) => {
-    if (!requireMcpAuth(req, res)) return;
+    if (!(await requireMcpAuth(req, res))) return;
     const sessionId = req.headers["mcp-session-id"];
     if (!sessionId || !transports[sessionId]) {
       res.status(400).send("Invalid or missing session ID");

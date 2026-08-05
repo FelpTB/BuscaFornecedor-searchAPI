@@ -36,6 +36,8 @@ export function createApp() {
       config: "/config",
       search_xray: "/search/xray",
       auth_mode: serverCfg.authMode,
+      auth_modes: serverCfg.authModes,
+      require_comprador: serverCfg.requireComprador,
       uptime: process.uptime(),
     });
   });

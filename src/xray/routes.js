@@ -5,9 +5,19 @@ import { runChatTurn, resetChatSession } from "./conversationalAgent.js";
 import { fetchCitiesNearby, getCitiesApiBase } from "../clients/citiesApi.js";
 import { executeSearchByText, getPublicConfig } from "../searchService.js";
 import { logError, logSuccess } from "../logger.js";
+import { resolveAuthContext, publicAuthView, assertCanSearch } from "../auth/resolveAuth.js";
+import {
+  registerBuyer,
+  issueApiKeyForUser,
+  getProfile,
+} from "../auth/registerBuyer.js";
+import { maybeEnqueueFromSearch } from "../telemetry/enqueue.js";
+import { getConsultaById, getAparicoesAgg } from "../db/repositories/consultasRepo.js";
+import { isSupabaseConfigured } from "../db/supabaseAdmin.js";
+import { AppError } from "../errors/AppError.js";
 
 /**
- * Rotas X-Ray — chat conversacional + Query Manager + Cities + probes.
+ * Rotas X-Ray — chat + auth/onboarding + probes Supabase.
  */
 export function createXrayRouter() {
   const router = Router();
@@ -18,7 +28,6 @@ export function createXrayRouter() {
     return res.send(getSearchXrayHtml());
   });
 
-  /** Probe direto da API de cidades (debug). */
   router.get("/search/xray/cities/nearby", async (req, res, next) => {
     try {
       const out = await fetchCitiesNearby({
@@ -26,16 +35,98 @@ export function createXrayRouter() {
         uf: req.query.uf,
         radius_km: req.query.radius_km,
       });
+      return res.json({ cities_api_base: getCitiesApiBase(), ...out });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  /** Status auth/supabase para o painel X-Ray. */
+  router.get("/search/xray/auth/status", async (req, res, next) => {
+    try {
+      let auth = anonymousSafe(req);
+      try {
+        auth = await resolveAuthContext(req.headers);
+      } catch {
+        auth = { authenticated: false, provider: "anonymous", roles: [], comprador: null };
+      }
       return res.json({
-        cities_api_base: getCitiesApiBase(),
-        ...out,
+        supabase_configured: isSupabaseConfigured(),
+        auth: publicAuthView(auth),
+        config_auth: getPublicConfig().auth,
+        supabase: getPublicConfig().supabase,
       });
     } catch (err) {
       return next(err);
     }
   });
 
-  /** Chat multi-turn (modo principal). */
+  router.post("/search/xray/auth/register", async (req, res, next) => {
+    try {
+      const out = await registerBuyer({
+        email: req.body?.email,
+        nome: req.body?.nome,
+        telefone: req.body?.telefone,
+        empresa_nome: req.body?.empresa_nome,
+        fonte: "X-Ray",
+        key_name: req.body?.key_name || "xray",
+      });
+      logSuccess("POST /search/xray/auth/register", "Comprador registrado via X-Ray", {
+        user_id: out.user_id,
+      });
+      return res.status(201).json(out);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.get("/search/xray/auth/me", async (req, res, next) => {
+    try {
+      const auth = await resolveAuthContext(req.headers);
+      if (!auth.userId) {
+        return res.json({ authenticated: false, auth: publicAuthView(auth) });
+      }
+      const profile = await getProfile(auth.userId);
+      return res.json({ authenticated: true, auth: publicAuthView(auth), profile });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.post("/search/xray/auth/api-keys", async (req, res, next) => {
+    try {
+      const auth = await resolveAuthContext(req.headers);
+      if (!auth.userId) throw AppError.unauthorized();
+      const out = await issueApiKeyForUser(auth.userId, { name: req.body?.name || "xray" });
+      return res.status(201).json(out);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.get("/search/xray/telemetry/consulta/:searchId", async (req, res, next) => {
+    try {
+      const auth = await resolveAuthContext(req.headers);
+      if (!auth.userId) throw AppError.unauthorized();
+      const row = await getConsultaById(req.params.searchId);
+      if (!row) return res.status(404).json({ error: "Não encontrada (ainda async?)" });
+      if (row.comprador !== auth.userId) throw AppError.forbidden();
+      return res.json(row);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.get("/search/xray/telemetry/aparicoes/:cnpj", async (req, res, next) => {
+    try {
+      await resolveAuthContext(req.headers);
+      const agg = await getAparicoesAgg(req.params.cnpj);
+      return res.json(agg || { cnpj: req.params.cnpj, total: 0, note: "sem registro ou tabela pendente de migration" });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   router.post("/search/xray/chat", async (req, res, next) => {
     const message =
       typeof req.body?.message === "string"
@@ -50,6 +141,13 @@ export function createXrayRouter() {
     const final_limit = req.body?.final_limit != null ? Number(req.body.final_limit) : 10;
 
     try {
+      let auth = null;
+      try {
+        auth = await resolveAuthContext(req.headers);
+      } catch {
+        auth = { authenticated: false, userId: null, roles: [], comprador: null, provider: "anonymous" };
+      }
+
       const out = await runChatTurn({
         session_id: req.body?.session_id,
         message,
@@ -58,55 +156,69 @@ export function createXrayRouter() {
         final_limit: Number.isInteger(final_limit) && final_limit >= 1 ? final_limit : 10,
         debug: req.body?.debug === true,
         rerank: req.body?.rerank === true,
+        auth,
+        assertCanSearch,
+        onSearchCompleted: (bundle) => {
+          maybeEnqueueFromSearch({
+            auth,
+            searchPayload: bundle.search,
+            requestParams: {
+              ...(bundle.mcp_tool_call?.arguments || {}),
+              intent: bundle.intent,
+            },
+            source: "xray",
+            session_id: typeof req.body?.session_id === "string" ? req.body.session_id : null,
+          });
+        },
       });
 
       logSuccess("POST /search/xray/chat", "Chat X-Ray turno", {
         session_id: out.session_id,
-        message_preview: message.slice(0, 80),
         actions: out.actions?.map((a) => a.tool),
-        intent: out.intent,
+        user_id: auth?.userId,
         search_id: out.search?.search_id,
-        results: out.search?.results?.length ?? 0,
-        agent_ms: out.duration_ms,
       });
       res.setHeader("Content-Type", "application/json; charset=utf-8");
-      return res.json(out);
+      return res.json({
+        ...out,
+        auth: publicAuthView(auth),
+      });
     } catch (err) {
-      const status = err.status ?? err.statusCode ?? 500;
-      logError("POST /search/xray/chat", "Chat X-Ray falhou", err, { status });
+      logError("POST /search/xray/chat", "Chat X-Ray falhou", err, {
+        status: err.status ?? 500,
+      });
       return next(err);
     }
   });
 
   router.post("/search/xray/chat/reset", (req, res) => {
     const out = resetChatSession(req.body?.session_id);
-    logSuccess("POST /search/xray/chat/reset", "Sessão de chat resetada", {
-      session_id: out.session_id,
-    });
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
     return res.json(out);
   });
 
-  /** One-shot legado (compat). */
   router.post("/search/xray/run", async (req, res, next) => {
     const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
-    if (!query) {
-      return res.status(400).json({ error: "Campo 'query' é obrigatório" });
-    }
+    if (!query) return res.status(400).json({ error: "Campo 'query' é obrigatório" });
     const final_limit = req.body?.final_limit != null ? Number(req.body.final_limit) : 10;
-
     const geo = {};
     if (typeof req.body?.city_name === "string" && req.body.city_name.trim()) {
       geo.city_name = req.body.city_name.trim();
     }
-    if (typeof req.body?.uf === "string" && req.body.uf.trim()) {
-      geo.uf = req.body.uf.trim();
-    }
+    if (typeof req.body?.uf === "string" && req.body.uf.trim()) geo.uf = req.body.uf.trim();
     if (req.body?.radius_km != null && req.body.radius_km !== "") {
       geo.radius_km = Number(req.body.radius_km);
     }
 
     try {
+      let auth = null;
+      try {
+        auth = await resolveAuthContext(req.headers);
+        assertCanSearch(auth);
+      } catch (e) {
+        if (e.status === 401 || e.status === 403) throw e;
+        auth = null;
+      }
+
       const out = await runAgentSearch({
         userQuery: query,
         config: getPublicConfig(),
@@ -117,27 +229,18 @@ export function createXrayRouter() {
         geo: Object.keys(geo).length ? geo : undefined,
       });
 
-      logSuccess("POST /search/xray/run", "Query Manager X-Ray executado", {
-        query_preview: query.slice(0, 80),
-        intent: out.intent,
-        geo: out.geo
-          ? {
-              city: out.geo.city_name,
-              uf: out.geo.uf,
-              radius_km: out.geo.radius_km,
-              cities: out.geo.cities_in_filter,
-            }
-          : null,
-        agent_ms: out.duration_ms,
-        search_ms: out.search_duration_ms,
-        search_id: out.search?.search_id,
-        results: out.search?.results?.length ?? 0,
+      maybeEnqueueFromSearch({
+        auth,
+        searchPayload: out.search,
+        requestParams: {
+          ...(out.mcp_tool_call?.arguments || {}),
+          intent: out.intent,
+        },
+        source: "xray",
       });
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      return res.json(out);
+
+      return res.json({ ...out, auth: publicAuthView(auth) });
     } catch (err) {
-      const status = err.status ?? err.statusCode ?? 500;
-      logError("POST /search/xray/run", "Agente X-Ray falhou", err, { status });
       return next(err);
     }
   });
@@ -145,7 +248,6 @@ export function createXrayRouter() {
   router.post("/search/xray/tool", async (req, res, next) => {
     try {
       let args = req.body?.arguments ?? req.body;
-
       const cityName =
         typeof req.body?.city_name === "string" ? req.body.city_name.trim() : "";
       if (cityName && args && typeof args === "object") {
@@ -163,23 +265,39 @@ export function createXrayRouter() {
         };
       }
 
+      let auth = null;
+      try {
+        auth = await resolveAuthContext(req.headers);
+        assertCanSearch(auth);
+      } catch (e) {
+        if (e.status === 401 || e.status === 403) throw e;
+      }
+
       const out = await runManualToolCall({
         toolArguments: args,
         executeSearchByText,
       });
-      logSuccess("POST /search/xray/tool", "Tool call manual X-Ray", {
-        search_id: out.search?.search_id,
-        results: out.search?.results?.length ?? 0,
+      maybeEnqueueFromSearch({
+        auth,
+        searchPayload: out.search,
+        requestParams: args,
+        source: "xray",
       });
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      return res.json(out);
+      return res.json({ ...out, auth: publicAuthView(auth) });
     } catch (err) {
-      logError("POST /search/xray/tool", "Tool call manual falhou", err, {
-        status: err.status ?? 500,
-      });
       return next(err);
     }
   });
 
   return router;
+}
+
+function anonymousSafe() {
+  return {
+    authenticated: false,
+    userId: null,
+    provider: "anonymous",
+    roles: [],
+    comprador: null,
+  };
 }

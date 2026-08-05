@@ -7,12 +7,17 @@ import { logSuccess } from "./logger.js";
 import {
   LIMITS,
   getAuthMode,
+  getAuthModes,
+  requireComprador,
   getBm25PayloadKeys,
   getDimensionKeys,
   getVectorNamesMap,
   getAllowedPayloadKeys,
   getFullTextPayloadKeys,
 } from "./config/env.js";
+import { isSupabaseConfigured } from "./db/supabaseAdmin.js";
+import { isPgPoolConfigured } from "./db/pgPool.js";
+import { getTelemetryMode } from "./telemetry/enqueue.js";
 
 const COLLECTION_NAME = process.env.COLLECTION_NAME;
 const ENDPOINT_SEARCH_TEXT = "POST /search/text";
@@ -719,8 +724,18 @@ function getPublicConfig() {
     },
     auth: {
       mode: getAuthMode(),
+      modes: getAuthModes(),
       required: getAuthMode() !== "off",
-      headers: ["Authorization: Bearer <key>", "X-Api-Key"],
+      require_comprador: requireComprador(),
+      headers: ["Authorization: Bearer <jwt|sk_bf_…>", "X-Api-Key"],
+      register: "POST /auth/register-buyer",
+      profile: "GET /auth/me",
+      api_keys: "POST /auth/api-keys",
+    },
+    supabase: {
+      configured: isSupabaseConfigured(),
+      pg_pool: isPgPoolConfigured(),
+      telemetry_mode: getTelemetryMode(),
     },
     mcp: {
       endpoint: "/mcp",

@@ -25,6 +25,17 @@ Pipeline quando busca:
 
 Sessões em memória (`src/xray/chatSessions.js`), TTL ~60 min. `session_id` fica no `localStorage` da UI.
 
+### Conta / Auth (teste Supabase)
+
+Aba **2 · Conta / Auth** no X-Ray:
+
+1. Criar conta comprador → recebe `sk_bf_…` (1x)
+2. Colar no campo API key → **Usar chave**
+3. Conversar / buscar (histórico e aparições gravados async)
+4. Probes: perfil, consulta por `search_id`, aparições por CNPJ
+
+Detalhes: [`implementacao-supabase.md`](implementacao-supabase.md).
+
 ## Endpoints
 
 | Método | Path | Descrição |

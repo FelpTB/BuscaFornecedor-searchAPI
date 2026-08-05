@@ -3,6 +3,8 @@
 | Documento | Conteúdo |
 |-----------|----------|
 | [aceitacao.md](aceitacao.md) | Critérios de aceite (Definition of Done) + verificação no código |
+| [implementacao-supabase.md](implementacao-supabase.md) | Auth + histórico + aparições + X-Ray (entregue) |
+| [notion-sync.md](notion-sync.md) | Como espelhar docs no Notion |
 | [plano-supabase-auth.md](plano-supabase-auth.md) | Plano Auth + histórico + aparições (Entra-ready, async) |
 | [architecture.md](architecture.md) | Camadas atuais, fluxo hot path, mapa de pastas |
 | [api.md](api.md) | Contratos HTTP |

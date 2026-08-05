@@ -198,16 +198,18 @@ export function getSearchXrayHtml() {
 
   <div class="wrap">
     <div class="auth-row">
-      <label class="hint">API key (se AUTH_MODE=api_key)</label>
-      <input type="password" id="apiKey" placeholder="Bearer / X-Api-Key (opcional)" autocomplete="off">
+      <label class="hint">API key (sk_bf_… ou JWT)</label>
+      <input type="password" id="apiKey" placeholder="Cole a chave do cadastro / Bearer" autocomplete="off">
+      <button type="button" class="ghost" id="btnUseKey">Usar chave</button>
       <span class="badge" id="authBadge">auth: …</span>
       <span class="hint" id="configHint">Carregando /config…</span>
     </div>
 
     <div class="mode-tabs">
       <button type="button" class="active" data-mode="chat">1 · Conversa</button>
-      <button type="button" data-mode="manual">2 · Tool call manual</button>
-      <button type="button" data-mode="probe">3 · Probes</button>
+      <button type="button" data-mode="account">2 · Conta / Auth</button>
+      <button type="button" data-mode="manual">3 · Tool call manual</button>
+      <button type="button" data-mode="probe">4 · Probes</button>
     </div>
 
     <div id="mode-chat" class="panel-mode active">
@@ -278,6 +280,33 @@ export function getSearchXrayHtml() {
         </aside>
       </div>
       <div id="formError" class="error"></div>
+    </div>
+
+    <div id="mode-account" class="panel-mode">
+      <div class="card" style="flex:1;overflow:auto">
+        <h2>Conta comprador + API key (teste Supabase)</h2>
+        <p class="hint">Cria <code>auth.users</code> + <code>usuario_comprador</code> + <code>api_keys</code>. A chave plaintext aparece <b>uma vez</b> — cole no campo acima e clique “Usar chave”.</p>
+        <div style="display:grid;gap:0.5rem;max-width:520px;margin-top:0.75rem">
+          <input type="text" id="regNome" placeholder="Nome *">
+          <input type="email" id="regEmail" placeholder="Email *">
+          <input type="text" id="regTelefone" placeholder="Telefone">
+          <input type="text" id="regEmpresa" placeholder="Empresa">
+          <button type="button" class="primary" id="btnRegister">Criar conta + chave</button>
+        </div>
+        <pre class="xray" id="accountOut" style="margin-top:0.85rem;max-height:280px">Aguardando…</pre>
+        <div class="probe-actions" style="margin-top:0.75rem">
+          <button type="button" class="ghost" id="btnMe">GET perfil (/auth/me)</button>
+          <button type="button" class="ghost" id="btnAuthStatus">Status Supabase</button>
+          <button type="button" class="ghost" id="btnNewKey">Emitir nova key</button>
+        </div>
+        <div class="opts" style="margin-top:0.75rem">
+          <label>search_id <input type="text" id="probeSearchId" placeholder="uuid da busca" style="width:260px"></label>
+          <button type="button" class="ghost" id="btnConsulta">Ver consulta (async)</button>
+          <label>CNPJ <input type="text" id="probeCnpj" placeholder="só dígitos" style="width:140px"></label>
+          <button type="button" class="ghost" id="btnAparicoes">Ver aparições</button>
+        </div>
+        <p class="hint">Após uma busca autenticada, aguarde ~1–2s e consulte o search_id para validar telemetria.</p>
+      </div>
     </div>
 
     <div id="mode-manual" class="panel-mode">
@@ -673,9 +702,12 @@ export function getSearchXrayHtml() {
             endpoint: "POST /search/xray/chat",
             tools: [
               "get_search_config",
+              "get_my_profile",
+              "register_buyer",
               "lookup_cities",
               "search_suppliers → Query Manager → filter.cidade list → search_text",
             ],
+            auth: "POST /search/xray/auth/register · GET /search/xray/auth/me",
             reset: "POST /search/xray/chat/reset",
           }, null, 2);
           return;
@@ -727,12 +759,113 @@ export function getSearchXrayHtml() {
         $("formChat").requestSubmit();
       }
     });
-    $("apiKey").addEventListener("change", () => loadConfig().catch(() => {}));
+
+    async function refreshAuthStatus() {
+      try {
+        const res = await fetch("/search/xray/auth/status", { headers: authHeaders() });
+        const data = await res.json();
+        const a = data.auth || {};
+        $("authBadge").textContent = a.authenticated
+          ? ("auth: " + (a.provider || "?") + (a.comprador ? " · comprador" : ""))
+          : ("auth: off · supabase " + (data.supabase_configured ? "ok" : "off"));
+        $("authBadge").className = "badge " + (a.authenticated ? "ok" : "warn");
+        return data;
+      } catch (e) {
+        $("authBadge").textContent = "auth: erro";
+        $("authBadge").className = "badge err";
+      }
+    }
+
+    $("btnUseKey").addEventListener("click", async () => {
+      localStorage.setItem("xray_api_key", $("apiKey").value.trim());
+      await refreshAuthStatus();
+      try {
+        const res = await fetch("/search/xray/auth/me", { headers: authHeaders() });
+        $("accountOut").textContent = JSON.stringify(await res.json(), null, 2);
+      } catch (e) {
+        $("accountOut").textContent = String(e);
+      }
+    });
+
+    $("btnRegister").addEventListener("click", async () => {
+      $("accountOut").textContent = "Registrando…";
+      try {
+        const res = await fetch("/search/xray/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nome: $("regNome").value.trim(),
+            email: $("regEmail").value.trim(),
+            telefone: $("regTelefone").value.trim() || undefined,
+            empresa_nome: $("regEmpresa").value.trim() || undefined,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+        if (data.api_key?.key) {
+          $("apiKey").value = data.api_key.key;
+          localStorage.setItem("xray_api_key", data.api_key.key);
+        }
+        $("accountOut").textContent = JSON.stringify(data, null, 2);
+        await refreshAuthStatus();
+      } catch (e) {
+        $("accountOut").textContent = e.message || String(e);
+      }
+    });
+
+    $("btnMe").addEventListener("click", async () => {
+      const res = await fetch("/search/xray/auth/me", { headers: authHeaders() });
+      $("accountOut").textContent = JSON.stringify(await res.json(), null, 2);
+    });
+    $("btnAuthStatus").addEventListener("click", async () => {
+      $("accountOut").textContent = JSON.stringify(await refreshAuthStatus(), null, 2);
+    });
+    $("btnNewKey").addEventListener("click", async () => {
+      const res = await fetch("/search/xray/auth/api-keys", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ name: "xray-" + Date.now() }),
+      });
+      const data = await res.json();
+      if (data.key) {
+        $("apiKey").value = data.key;
+        localStorage.setItem("xray_api_key", data.key);
+      }
+      $("accountOut").textContent = JSON.stringify(data, null, 2);
+    });
+    $("btnConsulta").addEventListener("click", async () => {
+      const id = $("probeSearchId").value.trim();
+      if (!id) { $("accountOut").textContent = "Informe search_id"; return; }
+      const res = await fetch("/search/xray/telemetry/consulta/" + encodeURIComponent(id), {
+        headers: authHeaders(),
+      });
+      $("accountOut").textContent = JSON.stringify(await res.json(), null, 2);
+    });
+    $("btnAparicoes").addEventListener("click", async () => {
+      const cnpj = $("probeCnpj").value.trim();
+      if (!cnpj) { $("accountOut").textContent = "Informe CNPJ"; return; }
+      const res = await fetch("/search/xray/telemetry/aparicoes/" + encodeURIComponent(cnpj), {
+        headers: authHeaders(),
+      });
+      $("accountOut").textContent = JSON.stringify(await res.json(), null, 2);
+    });
+
+    const savedKey = localStorage.getItem("xray_api_key");
+    if (savedKey) $("apiKey").value = savedKey;
+
+    $("apiKey").addEventListener("change", () => {
+      localStorage.setItem("xray_api_key", $("apiKey").value.trim());
+      loadConfig().catch(() => {});
+      refreshAuthStatus();
+    });
 
     updateSessionBadge();
     bindSuggestions();
     loadConfig()
-      .then(() => { $("manualJson").value = JSON.stringify(templateArgs(), null, 2); })
+      .then(() => {
+        $("manualJson").value = JSON.stringify(templateArgs(), null, 2);
+        return refreshAuthStatus();
+      })
       .catch((err) => {
         $("configHint").textContent = "Erro: " + err.message;
         $("formError").textContent = err.message;
