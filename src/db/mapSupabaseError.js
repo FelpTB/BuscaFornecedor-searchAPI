@@ -26,10 +26,11 @@ export function mapSupabaseError(err, context = "Supabase") {
   }
 
   if (/permission denied|42501|not authorized|Invalid API key/i.test(msg)) {
-    return new AppError(`${context}: ${msg}`, 403, {
-      code: "SUPABASE_PERMISSION",
-      details: { supabase_code: code },
-    });
+    return new AppError(
+      `${context}: ${msg}. Rode sql/migrations/002_schema_grants.sql no SQL Editor e, no Dashboard → Settings → API, exponha o schema "busca_fornecedor".`,
+      403,
+      { code: "SUPABASE_PERMISSION", details: { supabase_code: code } },
+    );
   }
 
   return new AppError(`${context}: ${msg}`, 502, {

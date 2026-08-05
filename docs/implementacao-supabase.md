@@ -42,16 +42,21 @@
 
 ## Como ligar (checklist)
 
-1. Rodar migration: [`sql/migrations/001_api_keys_aparicoes.sql`](../sql/migrations/001_api_keys_aparicoes.sql) no Supabase SQL Editor
-2. Railway / `.env`:
+1. Rodar migrations no Supabase SQL Editor (nessa ordem):
+   - [`sql/migrations/001_api_keys_aparicoes.sql`](../sql/migrations/001_api_keys_aparicoes.sql)
+   - [`sql/migrations/002_schema_grants.sql`](../sql/migrations/002_schema_grants.sql) ← grants `service_role` em `usuario_comprador` / `api_keys`
+2. Dashboard → **Settings → API → Exposed schemas**: incluir `busca_fornecedor` (além de `public`)
+3. Railway / `.env`:
    - `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
    - `SUPABASE_ANON_KEY` (login email+senha)
    - `DATABASE_URL` (pooler `:6543`) recomendado
    - `AUTH_MODE=api_key,supabase_jwt`
    - `REQUIRE_COMPRADOR=1` (produção)
    - `TELEMETRY_MODE=inline`
-3. Abrir `/search/xray` → Conta → criar conta **ou** entrar com conta existente → colar key → conversar/buscar
-4. Copiar `search_id` → probe “Ver consulta”
+4. Abrir `/search/xray` → Conta → criar conta **ou** entrar com conta existente → colar key → conversar/buscar
+5. Copiar `search_id` → probe “Ver consulta”
+
+Erro comum: `permission denied for table usuario_comprador` → falta o passo 1 (002) e/ou o passo 2.
 
 ---
 

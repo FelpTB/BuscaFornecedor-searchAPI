@@ -46,3 +46,6 @@ CREATE TABLE IF NOT EXISTS busca_fornecedor.aparicoes_cnpj_agg (
   total bigint NOT NULL DEFAULT 0,
   last_seen_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Depois desta migration, rode também 002_schema_grants.sql
+-- (permission denied em usuario_comprador / api_keys = grants ausentes).
