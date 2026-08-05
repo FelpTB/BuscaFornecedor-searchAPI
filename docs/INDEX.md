@@ -2,6 +2,7 @@
 
 | Documento | Conteúdo |
 |-----------|----------|
+| [auth.md](auth.md) | Camada de autenticação (fluxo, keys, env, migrations) |
 | [aceitacao.md](aceitacao.md) | Critérios de aceite (Definition of Done) + verificação no código |
 | [implementacao-supabase.md](implementacao-supabase.md) | Auth + histórico + aparições + X-Ray (entregue) |
 | [notion-sync.md](notion-sync.md) | Como espelhar docs no Notion |
