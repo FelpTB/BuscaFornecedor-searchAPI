@@ -166,9 +166,11 @@ async function resolveSupabaseJwt(token) {
 
 /**
  * @param {Record<string, string|string[]|undefined>} headers
+ * @param {{ optional?: boolean }} [opts] — se true (padrão no REST), ausência de credencial → anônimo
  * @returns {Promise<AuthContext>}
  */
-export async function resolveAuthContext(headers = {}) {
+export async function resolveAuthContext(headers = {}, opts = {}) {
+  const optional = opts.optional !== false;
   const modes = getAuthModes();
 
   if (modes.length === 1 && modes[0] === "off") {
@@ -177,13 +179,9 @@ export async function resolveAuthContext(headers = {}) {
 
   const token = extractBearerOrApiKey(headers);
 
-  // off + optional credentials (X-Ray testing with key while AUTH_MODE=off)
-  if (modes.includes("off") && !token) {
-    return anonymousAuth();
-  }
-
+  // Sem credencial: anônimo (permite register/login/config). Busca usa assertCanSearch.
   if (!token) {
-    if (modes.includes("off")) return anonymousAuth();
+    if (optional || modes.includes("off")) return anonymousAuth();
     throw AppError.unauthorized("Informe Authorization: Bearer <token|key> ou X-Api-Key");
   }
 
@@ -221,6 +219,11 @@ export async function resolveAuthContext(headers = {}) {
   throw AppError.unauthorized("Credencial inválida ou expirada");
 }
 
+function authModeRequiresCredential() {
+  const modes = getAuthModes();
+  return !(modes.length === 1 && modes[0] === "off");
+}
+
 function enforceCompradorGate(ctx) {
   if (!requireComprador()) return ctx;
   if (!ctx.authenticated) return ctx;
@@ -230,6 +233,11 @@ function enforceCompradorGate(ctx) {
 
 /** Gate explícito para rotas de busca. */
 export function assertCanSearch(auth) {
+  if (authModeRequiresCredential() && (!auth?.authenticated || !auth.userId)) {
+    throw AppError.unauthorized(
+      "Busca requer autenticação. Crie conta (register-buyer), faça login (login-buyer) ou envie Bearer/X-Api-Key.",
+    );
+  }
   if (!requireComprador()) return;
   if (!auth?.authenticated || !auth.userId) {
     throw AppError.unauthorized(
@@ -238,7 +246,7 @@ export function assertCanSearch(auth) {
   }
   if (!auth.roles?.includes("comprador") || !auth.comprador) {
     throw AppError.forbidden(
-      "Perfil de comprador obrigatório. Complete o cadastro (register_buyer) antes de buscar.",
+      "Perfil de comprador obrigatório. Complete o cadastro (register_buyer) ou login_buyer antes de buscar.",
     );
   }
   const { buscasRealizadas, limiteBuscas } = auth.comprador;

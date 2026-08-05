@@ -115,7 +115,11 @@ export function createXrayRouter() {
   router.post("/search/xray/auth/api-keys", async (req, res, next) => {
     try {
       const auth = await resolveAuthContext(req.headers);
-      if (!auth.userId) throw AppError.unauthorized();
+      if (!auth.userId) {
+        throw AppError.unauthorized(
+          "Cole uma API key/JWT válida no campo acima, ou use Criar conta / Já tenho conta para obter a primeira chave.",
+        );
+      }
       const out = await issueApiKeyForUser(auth.userId, { name: req.body?.name || "xray" });
       return res.status(201).json(out);
     } catch (err) {

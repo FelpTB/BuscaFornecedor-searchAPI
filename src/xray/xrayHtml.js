@@ -863,12 +863,21 @@ export function getSearchXrayHtml() {
       $("accountOut").textContent = JSON.stringify(await refreshAuthStatus(), null, 2);
     });
     $("btnNewKey").addEventListener("click", async () => {
+      if (!$("apiKey").value.trim()) {
+        $("accountOut").textContent =
+          "Emitir nova key exige estar autenticado. Use “Criar conta + chave” ou “Entrar + emitir chave” primeiro; depois cole a key e use este botão para rotacionar.";
+        return;
+      }
       const res = await fetch("/search/xray/auth/api-keys", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ name: "xray-" + Date.now() }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        $("accountOut").textContent = JSON.stringify(data, null, 2);
+        return;
+      }
       if (data.key) {
         $("apiKey").value = data.key;
         localStorage.setItem("xray_api_key", data.key);

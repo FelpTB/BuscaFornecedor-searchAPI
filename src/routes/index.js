@@ -82,7 +82,11 @@ export function createApiRouter() {
   /** Nova API key para usuário autenticado. */
   router.post("/auth/api-keys", async (req, res, next) => {
     try {
-      if (!req.auth?.userId) throw AppError.unauthorized();
+      if (!req.auth?.userId) {
+        throw AppError.unauthorized(
+          "Para emitir nova key, autentique-se antes (Bearer sk_bf_… / JWT) ou use POST /auth/login-buyer com email e senha.",
+        );
+      }
       const out = await issueApiKeyForUser(req.auth.userId, {
         name: req.body?.name || "agent",
       });

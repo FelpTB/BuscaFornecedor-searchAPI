@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createMcpServer } from "./createMcpServer.js";
 import { resolveAuthContext } from "../middleware/auth.js";
+import { getAuthModes } from "../config/env.js";
 import { logError, logSuccess } from "../logger.js";
 
 /**
@@ -14,7 +15,20 @@ export function mountMcp(app, deps) {
 
   const requireMcpAuth = async (req, res) => {
     try {
-      req.auth = await resolveAuthContext(req.headers);
+      req.auth = await resolveAuthContext(req.headers, { optional: true });
+      const modes = getAuthModes();
+      const authRequired = !(modes.length === 1 && modes[0] === "off");
+      if (authRequired && !req.auth?.authenticated) {
+        res.status(401).json({
+          jsonrpc: "2.0",
+          error: {
+            code: -32001,
+            message: "Informe Authorization: Bearer <token|key> ou X-Api-Key",
+          },
+          id: null,
+        });
+        return false;
+      }
       return true;
     } catch (err) {
       const status = err.status ?? 401;
