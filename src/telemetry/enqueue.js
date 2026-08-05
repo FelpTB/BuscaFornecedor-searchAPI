@@ -16,6 +16,7 @@ export function getTelemetryMode() {
 
 /**
  * Monta evento a partir da busca.
+ * status padrão alinhado ao produto: "concluida".
  */
 export function buildSearchCompletedEvent({
   search_id,
@@ -25,7 +26,7 @@ export function buildSearchCompletedEvent({
   params = {},
   results = [],
   latency_ms = null,
-  status = "completed",
+  status = "concluida",
   error_message = null,
 }) {
   return {
@@ -35,9 +36,11 @@ export function buildSearchCompletedEvent({
     source,
     session_id,
     params,
+    // Mantém results brutos + summary; persist faz summarize idempotente
+    results,
     results_summary: summarizeResultsForStorage(results),
     latency_ms,
-    status,
+    status: status === "completed" ? "concluida" : status,
     error_message,
     occurred_at: new Date().toISOString(),
   };
@@ -55,7 +58,6 @@ export function enqueueSearchCompleted(event) {
   }
 
   if (mode === "inline" || mode === "bullmq") {
-    // bullmq ainda não — usa inline
     queue.push(event);
     pump();
     return { queued: true, mode: "inline" };
@@ -118,10 +120,12 @@ export function maybeEnqueueFromSearch({
     params: {
       ...requestParams,
       intent: requestParams?.intent || null,
+      query: requestParams?.query || requestParams?.query_text || null,
+      bm25_query: requestParams?.bm25_query || null,
     },
     results: searchPayload?.results || [],
     latency_ms: searchPayload?.latency_ms ?? null,
-    status: "completed",
+    status: "concluida",
   });
   return enqueueSearchCompleted(event);
 }
