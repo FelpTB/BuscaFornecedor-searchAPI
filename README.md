@@ -11,6 +11,8 @@ Base inicial da API de busca de fornecedores (Qdrant + OpenAI), com o mesmo núc
 
 Todo endpoint de negócio deve ter **tool MCP correspondente** (mesmo serviço compartilhado).
 
+**Critérios de aceite (DoD):** [`docs/aceitacao.md`](docs/aceitacao.md)
+
 ## Quick start
 
 ```bash

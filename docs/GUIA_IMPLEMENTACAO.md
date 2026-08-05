@@ -4,6 +4,9 @@
 
 > **Objetivo:** Este documento consolida a arquitetura proposta em uma especificação técnica voltada para um agente de desenvolvimento. O foco é descrever os componentes, responsabilidades, fluxos, contratos e requisitos arquiteturais da aplicação, preservando a estrutura apresentada no documento original.
 
+> **Nota:** Visão-alvo de longo prazo — não equivale 1:1 ao código deste repo (Node/Express + Qdrant).  
+> Checklist de aceite **do que já está / falta neste repositório:** [`aceitacao.md`](aceitacao.md).
+
 ---
 
 # 1. Objetivo Geral da Arquitetura

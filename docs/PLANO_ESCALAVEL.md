@@ -1,8 +1,10 @@
 # Plano: BuscaFornecedor API+MCP seguro e escalável
 
-Versão atual = **núcleo de busca** (REST `/search/text` + MCP `/mcp`).  
+Versão atual = **núcleo de busca** (REST `/search/text` + MCP `/mcp` + X-Ray chat).  
 Stub de auth em `src/middleware/auth.js`.  
 Este documento planeja a evolução para multi-tenant com API key, registro de buscas no Supabase e hot path sem bloqueio.
+
+**Definition of Done (produto):** ver [`aceitacao.md`](aceitacao.md).
 
 ---
 
@@ -122,20 +124,22 @@ usage_daily (
 
 - [x] `POST /search/text`, `GET /config`, `GET /health`
 - [x] MCP Streamable HTTP (`search_text`, `get_config`)
-- [x] Sem Postgres / sem pipeline
+- [x] Query Manager + chat X-Ray + filtro regional (API cidades → `filter.cidade`)
+- [x] `search_id` / request id no hot path
+- [x] Sem Postgres no hot path (telemetria ainda planejada)
 
 ### Fase 1 — Auth por API key
 
+- [x] Middleware `AUTH_MODE=api_key` (Bearer / X-Api-Key) em REST e MCP — lookup em env
 - [ ] Tabela `api_keys` + script de emissão (`sk_live_…` mostrado 1x)
-- [ ] Middleware `requireApiKey` em REST e MCP (header `Authorization: Bearer` ou `X-Api-Key`)
 - [ ] Cache in-memory/Redis: `hash → { user_id, org_id, plan }` TTL 60–300s
-- [ ] Respostas `401` / `403` padronizadas
+- [ ] Ligar key → `user_id` / org reais (Supabase) — Subtarefa 2.4 / [`aceitacao.md`](aceitacao.md)
 
 ### Fase 2 — Telemetria assíncrona
 
-- [ ] Gerar `search_id` no início da request
+- [x] Gerar `search_id` no início da request
 - [ ] Publisher Redis/BullMQ: `search.started` + `search.completed`
-- [ ] Worker separado (serviço Railway) escreve em `searches`
+- [ ] Worker separado (serviço Railway) escreve em `searches` / `consultas`
 - [ ] Idempotência por `search_id`
 - [ ] Métrica: lag da fila + taxa de falha de persistência
 
