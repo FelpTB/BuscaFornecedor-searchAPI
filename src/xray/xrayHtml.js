@@ -822,7 +822,7 @@ export function getSearchXrayHtml() {
           body: JSON.stringify(body),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+        if (!res.ok) throw new Error(JSON.stringify(data, null, 2));
         if (data.api_key?.key) {
           $("apiKey").value = data.api_key.key;
           localStorage.setItem("xray_api_key", data.api_key.key);
@@ -846,7 +846,7 @@ export function getSearchXrayHtml() {
           }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+        if (!res.ok) throw new Error(JSON.stringify(data, null, 2));
         if (data.api_key?.key) {
           $("apiKey").value = data.api_key.key;
           localStorage.setItem("xray_api_key", data.api_key.key);

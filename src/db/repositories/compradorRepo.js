@@ -27,7 +27,13 @@ export async function probeApiKeysTable() {
     const sb = getSupabaseAdmin();
     const { error } = await sb.schema(SCHEMA).from("api_keys").select("id").limit(1);
     if (error) {
-      return { ok: false, reason: error.message, code: error.code };
+      return {
+        ok: false,
+        reason: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      };
     }
     return { ok: true };
   } catch (e) {
@@ -46,7 +52,7 @@ export async function getCompradorById(userId) {
     )
     .eq("id", userId)
     .maybeSingle();
-  if (error) throw new Error(`comprador lookup: ${error.message}`);
+  if (error) throw mapSupabaseError(error, "comprador lookup");
   return data;
 }
 
@@ -69,12 +75,7 @@ export async function createCompradorProfile({
     buscas_realizadas: 0,
   };
   const { data, error } = await sb.schema(SCHEMA).from("usuario_comprador").insert(row).select().single();
-  if (error) {
-    throw mapSupabaseError(
-      Object.assign(new Error(error.message), { code: error.code }),
-      "create comprador",
-    );
-  }
+  if (error) throw mapSupabaseError(error, "create comprador");
   return data;
 }
 
@@ -92,7 +93,7 @@ export async function findApiKeyByHash(keyHash) {
     if (String(error.message).includes("does not exist") || error.code === "42P01") {
       return null;
     }
-    throw new Error(`api_keys lookup: ${error.message}`);
+    throw mapSupabaseError(error, "api_keys lookup");
   }
   return data;
 }
@@ -105,22 +106,34 @@ export async function insertApiKey({
   scopes = ["search"],
 }) {
   const sb = adminOrThrow();
+  const payload = {
+    user_id: userId,
+    name: name || "default",
+    key_prefix,
+    key_hash,
+    scopes,
+    active: true,
+  };
   const { data, error } = await sb
     .schema(SCHEMA)
     .from("api_keys")
-    .insert({
-      user_id: userId,
-      name: name || "default",
-      key_prefix,
-      key_hash,
-      scopes,
-      active: true,
-    })
+    .insert(payload)
     .select("id, key_prefix, name, created_at")
     .single();
   if (error) {
     throw mapSupabaseError(
-      Object.assign(new Error(error.message), { code: error.code }),
+      {
+        ...error,
+        // anexa contexto do insert (sem secrets) para o log/resposta
+        _insert_context: {
+          table: `${SCHEMA}.api_keys`,
+          user_id: userId,
+          name: payload.name,
+          key_prefix,
+          scopes,
+          key_hash_len: key_hash?.length ?? 0,
+        },
+      },
       "insert api_key",
     );
   }
@@ -148,7 +161,7 @@ export async function revokeApiKey({ userId, keyPrefix }) {
     .eq("active", true)
     .select("id, key_prefix")
     .maybeSingle();
-  if (error) throw new Error(`revoke api_key: ${error.message}`);
+  if (error) throw mapSupabaseError(error, "revoke api_key");
   return data;
 }
 
@@ -161,6 +174,6 @@ export async function listApiKeysForUser(userId) {
     .select("id, name, key_prefix, active, created_at, last_used_at, revoked_at")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
-  if (error) throw new Error(`list api_keys: ${error.message}`);
+  if (error) throw mapSupabaseError(error, "list api_keys");
   return data || [];
 }
