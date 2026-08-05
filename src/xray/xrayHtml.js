@@ -285,13 +285,27 @@ export function getSearchXrayHtml() {
     <div id="mode-account" class="panel-mode">
       <div class="card" style="flex:1;overflow:auto">
         <h2>Conta comprador + API key (teste Supabase)</h2>
-        <p class="hint">Cria <code>auth.users</code> + <code>usuario_comprador</code> + <code>api_keys</code>. A chave plaintext aparece <b>uma vez</b> — cole no campo acima e clique “Usar chave”.</p>
-        <div style="display:grid;gap:0.5rem;max-width:520px;margin-top:0.75rem">
-          <input type="text" id="regNome" placeholder="Nome *">
-          <input type="email" id="regEmail" placeholder="Email *">
-          <input type="text" id="regTelefone" placeholder="Telefone">
-          <input type="text" id="regEmpresa" placeholder="Empresa">
-          <button type="button" class="primary" id="btnRegister">Criar conta + chave</button>
+        <p class="hint">Nova conta ou login de conta já existente. A chave <code>sk_bf_…</code> aparece <b>uma vez</b> — cole no campo acima e clique “Usar chave”.</p>
+        <div style="display:grid;gap:0.75rem;max-width:520px;margin-top:0.75rem">
+          <div>
+            <p class="hint" style="margin:0 0 0.35rem"><b>Criar conta</b></p>
+            <div style="display:grid;gap:0.5rem">
+              <input type="text" id="regNome" placeholder="Nome *">
+              <input type="email" id="regEmail" placeholder="Email *">
+              <input type="password" id="regPassword" placeholder="Senha (mín. 8) — recomendado p/ login depois">
+              <input type="text" id="regTelefone" placeholder="Telefone">
+              <input type="text" id="regEmpresa" placeholder="Empresa">
+              <button type="button" class="primary" id="btnRegister">Criar conta + chave</button>
+            </div>
+          </div>
+          <div>
+            <p class="hint" style="margin:0 0 0.35rem"><b>Já tenho conta</b> (email + senha do Supabase Auth)</p>
+            <div style="display:grid;gap:0.5rem">
+              <input type="email" id="loginEmail" placeholder="Email *">
+              <input type="password" id="loginPassword" placeholder="Senha *">
+              <button type="button" class="primary" id="btnLogin">Entrar + emitir chave</button>
+            </div>
+          </div>
         </div>
         <pre class="xray" id="accountOut" style="margin-top:0.85rem;max-height:280px">Aguardando…</pre>
         <div class="probe-actions" style="margin-top:0.75rem">
@@ -704,10 +718,11 @@ export function getSearchXrayHtml() {
               "get_search_config",
               "get_my_profile",
               "register_buyer",
+              "login_buyer",
               "lookup_cities",
               "search_suppliers → Query Manager → filter.cidade list → search_text",
             ],
-            auth: "POST /search/xray/auth/register · GET /search/xray/auth/me",
+            auth: "POST /search/xray/auth/register · POST /search/xray/auth/login · GET /search/xray/auth/me",
             reset: "POST /search/xray/chat/reset",
           }, null, 2);
           return;
@@ -790,14 +805,41 @@ export function getSearchXrayHtml() {
     $("btnRegister").addEventListener("click", async () => {
       $("accountOut").textContent = "Registrando…";
       try {
+        const body = {
+          nome: $("regNome").value.trim(),
+          email: $("regEmail").value.trim(),
+          telefone: $("regTelefone").value.trim() || undefined,
+          empresa_nome: $("regEmpresa").value.trim() || undefined,
+        };
+        const pw = $("regPassword").value;
+        if (pw) body.password = pw;
         const res = await fetch("/search/xray/auth/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+        if (data.api_key?.key) {
+          $("apiKey").value = data.api_key.key;
+          localStorage.setItem("xray_api_key", data.api_key.key);
+        }
+        $("accountOut").textContent = JSON.stringify(data, null, 2);
+        await refreshAuthStatus();
+      } catch (e) {
+        $("accountOut").textContent = e.message || String(e);
+      }
+    });
+
+    $("btnLogin").addEventListener("click", async () => {
+      $("accountOut").textContent = "Entrando…";
+      try {
+        const res = await fetch("/search/xray/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            nome: $("regNome").value.trim(),
-            email: $("regEmail").value.trim(),
-            telefone: $("regTelefone").value.trim() || undefined,
-            empresa_nome: $("regEmpresa").value.trim() || undefined,
+            email: $("loginEmail").value.trim(),
+            password: $("loginPassword").value,
           }),
         });
         const data = await res.json();

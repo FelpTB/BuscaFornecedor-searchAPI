@@ -729,6 +729,7 @@ function getPublicConfig() {
       require_comprador: requireComprador(),
       headers: ["Authorization: Bearer <jwt|sk_bf_…>", "X-Api-Key"],
       register: "POST /auth/register-buyer",
+      login: "POST /auth/login-buyer",
       profile: "GET /auth/me",
       api_keys: "POST /auth/api-keys",
     },

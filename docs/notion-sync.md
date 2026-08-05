@@ -1,43 +1,29 @@
 # Sincronizar documentação com Notion
 
-O Cursor deste workspace **não tem** servidor MCP Notion conectado (`GetMcpTools` não lista Notion).
+## Status
 
-## Opção A — MCP Notion (recomendado)
+MCP Notion configurado localmente via `@notionhq/notion-mcp-server` + `NOTION_TOKEN` em:
 
-1. Crie uma integração em [Notion Developers](https://www.notion.so/my-integrations) e copie o token.
-2. Compartilhe as páginas/databases desejadas com a integração.
-3. No Cursor: **Settings → MCP → Add new MCP server** (ou edite `mcp.json`):
+- `~/.cursor/mcp.json` (global Cursor)
+- `.cursor/mcp.json` do projeto (**gitignored** — não vai para o GitHub)
 
-```json
-{
-  "mcpServers": {
-    "notion": {
-      "command": "npx",
-      "args": ["-y", "@notionhq/notion-mcp-server"],
-      "env": {
-        "OPENAPI_MCP_HEADERS": "{\"Authorization\":\"Bearer ntn_***\",\"Notion-Version\":\"2022-06-28\"}"
-      }
-    }
-  }
-}
-```
+Template sem secret: `.cursor/mcp.json.example`.
 
-(Consulte o pacote/MCP Notion atual — o formato de env pode variar.)
+## Passos obrigatórios no Notion
 
-4. Reinicie o Cursor e peça ao agente: “publique/atualize a página Notion X com docs/implementacao-supabase.md”.
+1. Abra [integrações](https://www.notion.so/profile/integrations) e confirme a integração da chave.
+2. Em cada página/database que o agente deve ver: **⋯ → Conectar à integração** (ou Access na integração).
+3. **Developer: Reload Window** no Cursor (ou toggle MCP Notion off/on em Settings → MCP).
 
-## Opção B — Manual / CSV
+## Usar no chat
 
-Copie para um database Notion as páginas:
+Exemplos:
 
-| Doc local | Uso |
-|-----------|-----|
-| `docs/aceitacao.md` | DoD |
-| `docs/plano-supabase-auth.md` | Plano |
-| `docs/implementacao-supabase.md` | O que foi feito |
-| `docs/supabase-users.md` | Schema live |
-| `adr/010-supabase-hybrid-auth-telemetry.md` | Decisão |
+- “Crie uma página Notion ‘BuscaFornecedor Docs’ com o conteúdo de docs/implementacao-supabase.md”
+- “Liste páginas acessíveis à integração”
+- “Atualize a página X com o checklist de docs/aceitacao.md”
 
-## Opção C — GitHub ↔ Notion
+## Segurança
 
-Use automação (Zapier/Make) ou o Notion GitHub sync para espelhar `docs/**` do repositório `FelpTB/BuscaFornecedor-searchAPI`.
+- Nunca commitar `NOTION_TOKEN` / `.cursor/mcp.json` com secret.
+- Se a chave foi colada em chat, **rotacione** em Notion → Integration → Secrets e atualize o `mcp.json` local.

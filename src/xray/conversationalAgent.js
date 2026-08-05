@@ -13,7 +13,7 @@ import {
   setSessionLastSearch,
   publicMessages,
 } from "./chatSessions.js";
-import { registerBuyer, getProfile } from "../auth/registerBuyer.js";
+import { registerBuyer, loginBuyer, getProfile } from "../auth/registerBuyer.js";
 import { requireComprador } from "../config/env.js";
 import { isSupabaseConfigured } from "../db/supabaseAdmin.js";
 
@@ -63,16 +63,34 @@ export const CHAT_TOOLS = [
     function: {
       name: "register_buyer",
       description:
-        "Cria conta de comprador no Supabase + emite API key (mostrada 1x). Use quando o usuário quiser se cadastrar ou quando a busca exigir perfil e ele ainda não tiver. Peça nome, email, telefone opcional e empresa.",
+        "Cria conta NOVA de comprador no Supabase + emite API key (mostrada 1x). Se o e-mail já existir, use login_buyer. Peça nome, email, senha (recomendado) e telefone/empresa opcionais.",
       parameters: {
         type: "object",
         properties: {
           email: { type: "string" },
           nome: { type: "string" },
+          password: { type: "string", description: "Mín. 8 caracteres — permite login futuro" },
           telefone: { type: "string" },
           empresa_nome: { type: "string" },
         },
         required: ["email", "nome"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "login_buyer",
+      description:
+        "Login de conta JÁ EXISTENTE (email + senha do Supabase Auth) e emite nova API key. Use quando o usuário já tem conta no produto/front ou cadastrou antes. Não cria usuário novo.",
+      parameters: {
+        type: "object",
+        properties: {
+          email: { type: "string" },
+          password: { type: "string" },
+        },
+        required: ["email", "password"],
         additionalProperties: false,
       },
     },
@@ -125,7 +143,7 @@ function buildSystemPrompt(config, auth) {
     "produto, servico, descricao, publico, cliente";
   const authLine = auth?.authenticated
     ? `Usuário autenticado (provider=${auth.provider}, userId=${auth.userId || "—"}${auth.comprador ? `, cotas ${auth.comprador.buscasRealizadas}/${auth.comprador.limiteBuscas}` : ", sem perfil comprador"}).`
-    : "Usuário NÃO autenticado. Se REQUIRE_COMPRADOR estiver ativo ou ele quiser histórico, oriente o cadastro (register_buyer) e peça para colar a API key no painel do X-Ray.";
+    : "Usuário NÃO autenticado. Se REQUIRE_COMPRADOR estiver ativo ou ele quiser histórico: oriente cadastro (register_buyer) OU login de conta existente (login_buyer com email+senha). Peça para colar a API key no painel do X-Ray.";
 
   return `Você é o assistente conversacional do BuscaFornecedor (X-Ray / pré-proxy Microsoft MCP).
 
@@ -137,11 +155,12 @@ Supabase configurado: ${isSupabaseConfigured() ? "sim" : "não"}. REQUIRE_COMPRA
 
 Comportamento:
 1. Guie por linguagem natural. Pode clarificar produto, região, modelo de negócio.
-2. Se precisar cadastrar: peça nome + email (+ telefone/empresa) e chame register_buyer. Mostre a API key UMA vez e diga para colar no campo "API key" do X-Ray e clicar em "Usar chave".
-3. NÃO invente fornecedores. Só cite resultados de search_suppliers.
-4. Busque quando o briefing estiver claro. Refinamentos geram nova busca.
-5. Após busca, resuma tops e sugira ajustes. Histórico/aparições gravam async no Supabase quando autenticado.
-6. Evite jargão interno (Query Manager, RRF) na conversa.
+2. Conta nova: peça nome + email + senha e chame register_buyer. Conta existente: peça email + senha e chame login_buyer. Em ambos os casos mostre a API key UMA vez e diga para colar no campo "API key" do X-Ray e clicar em "Usar chave".
+3. Se register_buyer retornar EMAIL_EXISTS, use login_buyer.
+4. NÃO invente fornecedores. Só cite resultados de search_suppliers.
+5. Busque quando o briefing estiver claro. Refinamentos geram nova busca.
+6. Após busca, resuma tops e sugira ajustes. Histórico/aparições gravam async no Supabase quando autenticado.
+7. Evite jargão interno (Query Manager, RRF) na conversa.
 
 Config: dims [${dims}]; BM25 ${config?.bm25?.vector_name ? "on" : "off"}.`;
 }
@@ -228,7 +247,7 @@ async function executeTool(name, args, ctx) {
       return {
         ok: false,
         authenticated: false,
-        hint: "Cole a API key no painel X-Ray ou cadastre-se com register_buyer",
+        hint: "Cole a API key no painel X-Ray, faça login_buyer (conta existente) ou register_buyer (nova)",
       };
     }
     try {
@@ -244,10 +263,40 @@ async function executeTool(name, args, ctx) {
       const out = await registerBuyer({
         email: args.email,
         nome: args.nome,
+        password: args.password,
         telefone: args.telefone,
         empresa_nome: args.empresa_nome,
         fonte: "X-Ray",
         key_name: "xray-chat",
+      });
+      return {
+        ok: true,
+        user_id: out.user_id,
+        email: out.email,
+        comprador: out.comprador,
+        api_key: out.api_key,
+        temporary_password: out.temporary_password,
+        next_step:
+          "Peça ao usuário para colar api_key.key no campo API key do X-Ray e clicar em Usar chave. Depois continue a busca.",
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        error: e.message || String(e),
+        status: e.status,
+        code: e.details?.code,
+        hint: e.details?.code === "EMAIL_EXISTS" ? "Use login_buyer com email e senha" : undefined,
+      };
+    }
+  }
+
+  if (name === "login_buyer") {
+    try {
+      const out = await loginBuyer({
+        email: args.email,
+        password: args.password,
+        fonte: "X-Ray",
+        key_name: "xray-chat-login",
       });
       return {
         ok: true,
@@ -476,6 +525,9 @@ export async function runChatTurn({
       }
       if (name === "register_buyer") {
         actions.push({ tool: "register_buyer" });
+      }
+      if (name === "login_buyer") {
+        actions.push({ tool: "login_buyer" });
       }
       if (name === "get_my_profile") {
         actions.push({ tool: "get_my_profile" });

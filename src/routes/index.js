@@ -7,6 +7,7 @@ import { logError } from "../logger.js";
 import { assertCanSearch, publicAuthView } from "../auth/resolveAuth.js";
 import {
   registerBuyer,
+  loginBuyer,
   issueApiKeyForUser,
   getProfile,
   revokeUserApiKey,
@@ -58,6 +59,21 @@ export function createApiRouter() {
         key_name: req.body?.key_name || "api",
       });
       res.status(201).json(out);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  /** Conta existente: email+senha → nova API key. */
+  router.post("/auth/login-buyer", async (req, res, next) => {
+    try {
+      const out = await loginBuyer({
+        email: req.body?.email,
+        password: req.body?.password,
+        fonte: req.body?.fonte || "API",
+        key_name: req.body?.key_name || "api-login",
+      });
+      res.status(200).json(out);
     } catch (err) {
       return next(err);
     }

@@ -4,6 +4,7 @@ Estes servidores aumentam a memória operacional do agente (banco, filas, deploy
 
 | MCP | Uso no BuscaFornecedor | Quando habilitar |
 |-----|------------------------|------------------|
+| **Notion** | Docs do projeto no workspace Notion | Já (token local em `.cursor/mcp.json`, gitignored) |
 | **GitHub** | PRs, issues, checks | Já no dia a dia |
 | **PostgreSQL / Supabase** | Schema, SELECT, índices | Após Fase 1 (DB) |
 | **Redis** (se disponível) | Filas/cotas | Após Fase 2 |
@@ -11,6 +12,17 @@ Estes servidores aumentam a memória operacional do agente (banco, filas, deploy
 | **Railway** | Logs, vars, restart | Deploy contínuo |
 | **Docker** | Compose/containers | Se adicionar Docker local |
 | **Context7 / docs** | Docs de libs | Opcional |
+
+## Notion (local)
+
+Config oficial (`@notionhq/notion-mcp-server`) com `NOTION_TOKEN`:
+
+1. Arquivo **local** (não commitado): `.cursor/mcp.json` e/ou `~/.cursor/mcp.json`
+2. Template sem secret: `.cursor/mcp.json.example`
+3. No Notion: compartilhe páginas/databases com a integração (**⋯ → Conectar à integração**)
+4. Recarregue o Cursor (MCP) e teste: “liste páginas no Notion”
+
+Detalhes: [`notion-sync.md`](notion-sync.md).
 
 ## Princípios
 

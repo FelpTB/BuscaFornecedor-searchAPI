@@ -14,6 +14,7 @@ API + MCP de busca híbrida de fornecedores (Qdrant + OpenAI), Node.js ESM / Exp
 | Skills | `.cursor/skills/*/SKILL.md` | Especialistas + workflows `/…` |
 | Docs | `docs/` | Arquitetura e contratos |
 | ADRs | `adr/` | Decisões (aceitas e propostas) |
+| Notion | Roadmap + Document Hub (skill `notion-sync`) | Planejamento produto + docs colaborativos |
 | MCP dev | `docs/mcp-servers.md` | MCPs externos recomendados |
 
 Índice docs: [`docs/INDEX.md`](docs/INDEX.md).
@@ -25,6 +26,7 @@ API + MCP de busca híbrida de fornecedores (Qdrant + OpenAI), Node.js ESM / Exp
 3. Código em `src/` = verdade. `PLANO_ESCALAVEL.md` = evolução. `GUIA_IMPLEMENTACAO.md` = visão longa — **não** assumir FastAPI/RabbitMQ implementados.
 4. APIs de suporte: inventário em `docs/support-apis.md` (cidades, Qdrant Request, searchAPI, site MCP).
 5. Consultar ADRs antes de mudar arquitetura.
+6. Após entregas significativas: sincronizar Notion (skill `notion-sync`) — Roadmap + Document Hub.
 
 ## Commands (skills com invoke explícito)
 
@@ -38,4 +40,4 @@ API + MCP de busca híbrida de fornecedores (Qdrant + OpenAI), Node.js ESM / Exp
 
 ## Skills de domínio (auto)
 
-`express-api`, `mcp-tools`, `qdrant-search`, `openai-embeddings`, `security-hardening`, `railway-deploy`, `supabase-db`
+`express-api`, `mcp-tools`, `qdrant-search`, `openai-embeddings`, `security-hardening`, `railway-deploy`, `supabase-db`, `notion-sync`

@@ -34,6 +34,7 @@ Se uma skill nova não listar: recarregue a janela do Cursor (`Developer: Reload
 | `architecture.mdc` | Always Apply |
 | `security.mdc` | Always Apply |
 | `roadmap.mdc` | Always Apply |
+| `notion-sync.mdc` | Always Apply |
 | `node-express.mdc` | Globs `src/**/*.js` |
 | `mcp.mdc` | Globs `src/mcp/**` |
 | `qdrant-search.mdc` | Globs search modules |
@@ -44,7 +45,7 @@ Se uma skill nova não listar: recarregue a janela do Cursor (`Developer: Reload
 
 | Skill | Invocação |
 |-------|-----------|
-| `supabase-db`, `qdrant-search`, `express-api`, `mcp-tools`, `openai-embeddings`, `security-hardening`, `railway-deploy` | Agent Decides |
+| `notion-sync`, `supabase-db`, `qdrant-search`, `express-api`, `mcp-tools`, `openai-embeddings`, `security-hardening`, `railway-deploy` | Agent Decides |
 | `/add-auth`, `/new-endpoint`, `/new-mcp-tool`, `/new-worker` | Manual (`disable-model-invocation`) |
 
 ## Ordem de prioridade ao implementar

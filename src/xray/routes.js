@@ -8,6 +8,7 @@ import { logError, logSuccess } from "../logger.js";
 import { resolveAuthContext, publicAuthView, assertCanSearch } from "../auth/resolveAuth.js";
 import {
   registerBuyer,
+  loginBuyer,
   issueApiKeyForUser,
   getProfile,
 } from "../auth/registerBuyer.js";
@@ -68,6 +69,7 @@ export function createXrayRouter() {
         nome: req.body?.nome,
         telefone: req.body?.telefone,
         empresa_nome: req.body?.empresa_nome,
+        password: req.body?.password,
         fonte: "X-Ray",
         key_name: req.body?.key_name || "xray",
       });
@@ -75,6 +77,23 @@ export function createXrayRouter() {
         user_id: out.user_id,
       });
       return res.status(201).json(out);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.post("/search/xray/auth/login", async (req, res, next) => {
+    try {
+      const out = await loginBuyer({
+        email: req.body?.email,
+        password: req.body?.password,
+        fonte: "X-Ray",
+        key_name: req.body?.key_name || "xray-login",
+      });
+      logSuccess("POST /search/xray/auth/login", "Login comprador via X-Ray", {
+        user_id: out.user_id,
+      });
+      return res.json(out);
     } catch (err) {
       return next(err);
     }
