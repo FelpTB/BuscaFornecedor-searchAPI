@@ -4,7 +4,8 @@ Versão atual = **núcleo de busca** (REST `/search/text` + MCP `/mcp` + X-Ray c
 Stub de auth em `src/middleware/auth.js`.  
 Este documento planeja a evolução para multi-tenant com API key, registro de buscas no Supabase e hot path sem bloqueio.
 
-**Definition of Done (produto):** ver [`aceitacao.md`](aceitacao.md).
+**Definition of Done (produto):** ver [`aceitacao.md`](aceitacao.md).  
+**Auth + Supabase (próxima fatia):** [`plano-supabase-auth.md`](plano-supabase-auth.md) · ADR 010.
 
 ---
 

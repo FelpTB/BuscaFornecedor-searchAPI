@@ -3,6 +3,7 @@
 | Documento | Conteúdo |
 |-----------|----------|
 | [aceitacao.md](aceitacao.md) | Critérios de aceite (Definition of Done) + verificação no código |
+| [plano-supabase-auth.md](plano-supabase-auth.md) | Plano Auth + histórico + aparições (Entra-ready, async) |
 | [architecture.md](architecture.md) | Camadas atuais, fluxo hot path, mapa de pastas |
 | [api.md](api.md) | Contratos HTTP |
 | [mcp.md](mcp.md) | Tools, transport, parity REST |

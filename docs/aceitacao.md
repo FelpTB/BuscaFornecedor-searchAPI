@@ -44,11 +44,11 @@ Nenhum item além dos três `[x]` acima foi promovido a concluído:
 
 ### Próximos passos sugeridos (ordem)
 
-1. Identidade de usuário (Supabase JWT / API key → `user_id`) — critério 2  
-2. Telemetria async: gravar busca + params + resultados no Supabase — completa critério 5  
-3. Fallback Vector — critério 7  
-4. Contador de Aparições — critério 6  
-5. Módulo de Envios — critério 8  
-6. Fechar critério 9 quando 2–8 estiverem no código
+1. **Identidade + histórico + aparições** — seguir [`plano-supabase-auth.md`](plano-supabase-auth.md) (fases S0–S3); ADR 010  
+2. Fallback Vector — critério 7  
+3. Módulo de Envios — critério 8  
+4. Fechar critério 9 quando 2–8 estiverem no código
+
+Skill Cursor: `.cursor/skills/supabase-db/`
 
 Ver também: [`PLANO_ESCALAVEL.md`](PLANO_ESCALAVEL.md), [`GUIA_IMPLEMENTACAO.md`](GUIA_IMPLEMENTACAO.md).

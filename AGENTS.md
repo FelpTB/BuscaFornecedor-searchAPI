@@ -33,8 +33,9 @@ API + MCP de busca híbrida de fornecedores (Qdrant + OpenAI), Node.js ESM / Exp
 | `/new-endpoint` | Rota + service + tool MCP + docs |
 | `/new-mcp-tool` | Tool Zod + parity |
 | `/new-worker` | Worker BullMQ telemetria (PLANO) |
-| `/add-auth` | Fase 1 API key |
+| `/add-auth` | Auth híbrida (API key hash + JWT) — ADR 010 / plano-supabase-auth |
+| `/new-worker` | Worker BullMQ telemetria (PLANO) |
 
 ## Skills de domínio (auto)
 
-`express-api`, `mcp-tools`, `qdrant-search`, `openai-embeddings`, `security-hardening`, `railway-deploy`
+`express-api`, `mcp-tools`, `qdrant-search`, `openai-embeddings`, `security-hardening`, `railway-deploy`, `supabase-db`
