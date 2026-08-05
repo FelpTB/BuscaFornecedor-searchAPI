@@ -7,12 +7,25 @@ function timestamp() {
   return new Date().toISOString();
 }
 
+/**
+ * Redige só segredos óbvios — NÃO mascara key_prefix (sk_bf_xxxx) nem mensagens de erro.
+ */
+function looksLikeSecret(value) {
+  if (typeof value !== "string") return false;
+  if (value.length < 32) return false;
+  // JWT
+  if (/^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(value)) return true;
+  // API key completa (não prefixo curto)
+  if (/^sk_bf_[A-Za-z0-9_-]{20,}$/.test(value)) return true;
+  if (/service_role|supabase.*secret/i.test(value) && value.length > 40) return true;
+  if (/password|passwd|secret_key/i.test(value) && value.length > 40) return true;
+  return false;
+}
+
 function safeJson(value) {
   try {
     return JSON.stringify(value, (_k, v) => {
-      if (typeof v === "string" && /service_role|eyJ|sk_bf_|password|secret/i.test(v) && v.length > 20) {
-        return `[redacted:${v.slice(0, 6)}…]`;
-      }
+      if (looksLikeSecret(v)) return `[redacted:${String(v).slice(0, 8)}…]`;
       return v;
     });
   } catch {
@@ -46,23 +59,18 @@ export function logInfo(endpoint, message, details = null) {
 export function logError(endpoint, message, err, details = null) {
   const errDetail = {
     ...(details || {}),
-    error_message: err?.message ?? String(err),
-    error_name: err?.name,
-    error_code: err?.code ?? err?.details?.supabase?.code,
-    error_status: err?.status ?? err?.statusCode,
-    error_details: err?.details ?? err?.details,
-    // PostgREST fields if present on the raw error
-    postgrest: err
-      ? {
-          message: err.message,
-          code: err.code,
-          details: err.details,
-          hint: err.hint,
-        }
-      : undefined,
-    error_data: err?.data,
-    stack: err?.stack ? err.stack.split("\n").slice(0, 8).join(" | ") : undefined,
   };
+  if (err != null) {
+    errDetail.error_message = typeof err.message === "string" ? err.message : String(err);
+    errDetail.error_name = err.name;
+    errDetail.error_code = err.code;
+    errDetail.error_status = err.status ?? err.statusCode;
+    if (err.details !== undefined) errDetail.error_details = err.details;
+    if (err.hint !== undefined) errDetail.error_hint = err.hint;
+    if (err.stack) {
+      errDetail.stack = err.stack.split("\n").slice(0, 8).join(" | ");
+    }
+  }
   log("ERROR", endpoint, message, errDetail);
   if (err?.stack) {
     console.error(`[${timestamp()}] [${endpoint}] STACK:\n${err.stack}`);

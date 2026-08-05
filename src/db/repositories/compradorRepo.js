@@ -3,8 +3,10 @@
  */
 
 import { getSupabaseAdmin, isSupabaseConfigured } from "../supabaseAdmin.js";
+import { getPgPool, isPgPoolConfigured } from "../pgPool.js";
 import { AppError } from "../../errors/AppError.js";
 import { mapSupabaseError } from "../mapSupabaseError.js";
+import { logInfo } from "../../logger.js";
 
 const SCHEMA = "busca_fornecedor";
 
@@ -105,6 +107,46 @@ export async function insertApiKey({
   key_hash,
   scopes = ["search"],
 }) {
+  const insertMeta = {
+    table: `${SCHEMA}.api_keys`,
+    user_id: userId,
+    name: name || "default",
+    key_prefix,
+    scopes,
+    key_hash_len: key_hash?.length ?? 0,
+    via: null,
+  };
+
+  // Preferir pg (DATABASE_URL): evita falhas opacas do PostgREST em schemas customizados
+  if (isPgPoolConfigured()) {
+    insertMeta.via = "pg";
+    try {
+      const pool = getPgPool();
+      const result = await pool.query(
+        `INSERT INTO busca_fornecedor.api_keys
+          (user_id, name, key_prefix, key_hash, scopes, active)
+         VALUES ($1, $2, $3, $4, $5::text[], true)
+         RETURNING id, key_prefix, name, created_at`,
+        [userId, name || "default", key_prefix, key_hash, scopes],
+      );
+      logInfo("insert api_key", "OK via pg", { key_prefix, user_id: userId });
+      return result.rows[0];
+    } catch (e) {
+      throw mapSupabaseError(
+        {
+          message: e.message,
+          code: e.code,
+          details: e.detail,
+          hint: e.hint,
+          name: e.name,
+        },
+        "insert api_key (pg)",
+        { insert: insertMeta },
+      );
+    }
+  }
+
+  insertMeta.via = "postgrest";
   const sb = adminOrThrow();
   const payload = {
     user_id: userId,
@@ -120,23 +162,11 @@ export async function insertApiKey({
     .insert(payload)
     .select("id, key_prefix, name, created_at")
     .single();
+
   if (error) {
-    throw mapSupabaseError(
-      {
-        ...error,
-        // anexa contexto do insert (sem secrets) para o log/resposta
-        _insert_context: {
-          table: `${SCHEMA}.api_keys`,
-          user_id: userId,
-          name: payload.name,
-          key_prefix,
-          scopes,
-          key_hash_len: key_hash?.length ?? 0,
-        },
-      },
-      "insert api_key",
-    );
+    throw mapSupabaseError(error, "insert api_key (postgrest)", { insert: insertMeta });
   }
+  logInfo("insert api_key", "OK via postgrest", { key_prefix, user_id: userId });
   return data;
 }
 

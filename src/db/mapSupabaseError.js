@@ -6,73 +6,88 @@ import { AppError } from "../errors/AppError.js";
 import { logError } from "../logger.js";
 
 /**
- * Normaliza PostgrestError | Error | unknown em um objeto diagnóstico.
+ * Lê campos do PostgrestError mesmo quando não são enumeráveis (spread falha).
  * @param {unknown} err
- * @returns {{
- *   message: string,
- *   code?: string,
- *   details?: string,
- *   hint?: string,
- *   status?: number,
- *   name?: string,
- *   raw: string,
- * }}
  */
-export function extractSupabaseError(err) {
+export function serializePostgrestError(err) {
+  if (err == null) return { empty: true };
+  const out = {
+    type: typeof err,
+    name: err?.name,
+    ctor: err?.constructor?.name,
+  };
+  for (const key of ["message", "code", "details", "hint", "status", "statusCode"]) {
+    try {
+      const v = err[key];
+      if (v === undefined || v === null) continue;
+      out[key] = typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? v : String(v);
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    out.ownKeys = Object.getOwnPropertyNames(err);
+  } catch {
+    out.ownKeys = [];
+  }
+  try {
+    out.jsonClone = JSON.parse(JSON.stringify(err));
+  } catch {
+    out.jsonClone = null;
+  }
+  if (typeof err === "string") out.asString = err;
+  return out;
+}
+
+/**
+ * @param {unknown} err
+ * @param {Record<string, unknown>} [extraContext]
+ */
+export function extractSupabaseError(err, extraContext = {}) {
   if (!err) {
-    return { message: "erro desconhecido (null)", raw: "null" };
+    return { message: "erro desconhecido (null)", raw: "null", ...extraContext };
   }
 
-  // PostgrestError shape: { message, code, details, hint }
+  const pg = serializePostgrestError(err);
   const message =
-    (typeof err.message === "string" && err.message.trim()) ||
-    (typeof err.error === "string" && err.error.trim()) ||
-    (typeof err.msg === "string" && err.msg.trim()) ||
+    (typeof pg.message === "string" && pg.message.trim()) ||
+    (typeof err?.error === "string" && err.error.trim()) ||
     "";
   const details =
-    typeof err.details === "string"
-      ? err.details
-      : err.details != null
-        ? JSON.stringify(err.details)
+    typeof pg.details === "string"
+      ? pg.details
+      : pg.details != null
+        ? String(pg.details)
         : undefined;
-  const hint = typeof err.hint === "string" ? err.hint : undefined;
-  const code = err.code != null ? String(err.code) : undefined;
-  const status = err.status ?? err.statusCode;
+  const hint = typeof pg.hint === "string" ? pg.hint : pg.hint != null ? String(pg.hint) : undefined;
+  const code = pg.code != null ? String(pg.code) : undefined;
+  const status = pg.status ?? pg.statusCode;
 
   const parts = [];
   if (message && message !== "Error") parts.push(message);
-  else if (message === "Error") parts.push("Error (mensagem genérica do PostgREST)");
+  else if (message === "Error") parts.push("Error (mensagem genérica do PostgREST — veja details/hint/code)");
   if (details) parts.push(`details=${details}`);
   if (hint) parts.push(`hint=${hint}`);
   if (code) parts.push(`code=${code}`);
-
-  const composed =
-    parts.length > 0
-      ? parts.join(" | ")
-      : typeof err === "string"
-        ? err
-        : (() => {
-            try {
-              return JSON.stringify(err);
-            } catch {
-              return String(err);
-            }
-          })();
+  if (parts.length === 0) {
+    parts.push(`PostgREST sem message (raw=${JSON.stringify(pg)})`);
+  }
 
   return {
-    message: message || composed,
+    message: message || parts.join(" | "),
     code,
     details,
     hint,
     status,
-    name: err.name,
-    raw: composed,
-    insert_context: err._insert_context || undefined,
+    name: pg.name,
+    raw: parts.join(" | "),
+    postgrest: pg,
+    ...extraContext,
   };
 }
 
 function suggestFix(info) {
-  const blob = `${info.message} ${info.details || ""} ${info.hint || ""} ${info.code || ""}`;
+  const blob = `${info.message} ${info.details || ""} ${info.hint || ""} ${info.code || ""} ${JSON.stringify(info.postgrest || {})}`;
 
   if (/does not exist|schema cache|42P01|PGRST205|Could not find the table|relation .+ does not exist/i.test(blob)) {
     return {
@@ -106,10 +121,10 @@ function suggestFix(info) {
     return {
       httpStatus: 502,
       appCode: "SCHEMA_MISMATCH",
-      tip: "Coluna/schema divergente do esperado. Confira a migration 001 e o cache do schema (reload schema no Dashboard).",
+      tip: "Coluna/schema divergente. Confira migration 001 e Reload schema no Dashboard.",
     };
   }
-  if (/row-level security|RLS|42501/i.test(blob)) {
+  if (/row-level security|RLS/i.test(blob)) {
     return {
       httpStatus: 403,
       appCode: "RLS_BLOCKED",
@@ -120,28 +135,27 @@ function suggestFix(info) {
   return {
     httpStatus: 502,
     appCode: "SUPABASE_ERROR",
-    tip: "Veja details/hint/code abaixo e os logs do Railway (campo supabase).",
+    tip: "PostgREST falhou sem message útil — tente via DATABASE_URL (pg) ou confira grants/RLS/Exposed schemas. Veja details.postgrest no JSON.",
   };
 }
 
 /**
- * @param {unknown} err
+ * @param {unknown} err — erro bruto do Supabase/pg (NÃO AppError)
  * @param {string} [context]
+ * @param {Record<string, unknown>} [extraContext] — ex.: { insert: {...} }
  * @returns {AppError}
  */
-export function mapSupabaseError(err, context = "Supabase") {
-  const info = extractSupabaseError(err);
+export function mapSupabaseError(err, context = "Supabase", extraContext = {}) {
+  const info = extractSupabaseError(err, extraContext);
   const fix = suggestFix(info);
 
-  const message = [
-    `${context}: ${info.raw}`,
-    fix.tip ? `→ ${fix.tip}` : null,
-  ]
+  const message = [`${context}: ${info.raw}`, fix.tip ? `→ ${fix.tip}` : null]
     .filter(Boolean)
     .join(" ");
 
   const details = {
     context,
+    tip: fix.tip,
     supabase: {
       message: info.message,
       code: info.code,
@@ -150,11 +164,16 @@ export function mapSupabaseError(err, context = "Supabase") {
       status: info.status,
       name: info.name,
     },
-    tip: fix.tip,
-    ...(info.insert_context ? { insert: info.insert_context } : {}),
+    postgrest: info.postgrest,
+    ...(info.insert ? { insert: info.insert } : {}),
+    ...(extraContext.insert ? { insert: extraContext.insert } : {}),
   };
 
-  logError("supabase", message, err, details);
+  // Loga o erro bruto + details já normalizados (não o AppError)
+  logError("supabase", message, null, {
+    ...details,
+    raw_error_string: err == null ? null : String(err),
+  });
 
   return new AppError(message, fix.httpStatus, {
     code: fix.appCode,
