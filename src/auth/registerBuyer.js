@@ -16,7 +16,13 @@ import {
   revokeApiKey,
 } from "../db/repositories/compradorRepo.js";
 import { generateApiKey } from "./apiKeyHash.js";
-import { AppError } from "../errors/AppError.js";
+import { AppError, isAppError } from "../errors/AppError.js";
+import { mapSupabaseError } from "../db/mapSupabaseError.js";
+
+function rethrowMapped(e) {
+  if (isAppError(e)) throw e;
+  throw mapSupabaseError(e);
+}
 
 function formatBuyerResult({ userId, email, comprador, stored, key, extra = {} }) {
   return {
@@ -127,35 +133,39 @@ export async function registerBuyer(input = {}) {
   }
 
   const userId = created.user.id;
-  const comprador = await ensureCompradorProfile(created.user, {
-    nome,
-    telefone: input.telefone,
-    empresa_nome: input.empresa_nome,
-    fonte: input.fonte || "Agente",
-  });
+  try {
+    const comprador = await ensureCompradorProfile(created.user, {
+      nome,
+      telefone: input.telefone,
+      empresa_nome: input.empresa_nome,
+      fonte: input.fonte || "Agente",
+    });
 
-  const key = generateApiKey();
-  const stored = await insertApiKey({
-    userId,
-    name: input.key_name || "xray-agent",
-    key_prefix: key.key_prefix,
-    key_hash: key.key_hash,
-  });
+    const key = generateApiKey();
+    const stored = await insertApiKey({
+      userId,
+      name: input.key_name || "xray-agent",
+      key_prefix: key.key_prefix,
+      key_hash: key.key_hash,
+    });
 
-  return formatBuyerResult({
-    userId,
-    email,
-    comprador,
-    stored,
-    key,
-    extra: passwordProvided
-      ? {}
-      : {
-          temporary_password: password,
-          password_note:
-            "Senha temporária gerada — guarde para login futuro (login-buyer). Prefira informar password no cadastro.",
-        },
-  });
+    return formatBuyerResult({
+      userId,
+      email,
+      comprador,
+      stored,
+      key,
+      extra: passwordProvided
+        ? {}
+        : {
+            temporary_password: password,
+            password_note:
+              "Senha temporária gerada — guarde para login futuro (login-buyer). Prefira informar password no cadastro.",
+          },
+    });
+  } catch (e) {
+    rethrowMapped(e);
+  }
 }
 
 /**
@@ -202,32 +212,36 @@ export async function loginBuyer(input = {}) {
   }
 
   const user = data.user;
-  const comprador = await ensureCompradorProfile(user, {
-    fonte: input.fonte || "Login",
-  });
-  if (!comprador) {
-    throw AppError.forbidden("Não foi possível criar/obter perfil comprador");
+  try {
+    const comprador = await ensureCompradorProfile(user, {
+      fonte: input.fonte || "Login",
+    });
+    if (!comprador) {
+      throw AppError.forbidden("Não foi possível criar/obter perfil comprador");
+    }
+
+    const key = generateApiKey();
+    const stored = await insertApiKey({
+      userId: user.id,
+      name: input.key_name || "login",
+      key_prefix: key.key_prefix,
+      key_hash: key.key_hash,
+    });
+
+    return formatBuyerResult({
+      userId: user.id,
+      email: user.email || email,
+      comprador,
+      stored,
+      key,
+      extra: {
+        access_token: data.session?.access_token || null,
+        note: "API key emitida para conta existente. O JWT (access_token) também autentica se AUTH_MODE incluir supabase_jwt.",
+      },
+    });
+  } catch (e) {
+    rethrowMapped(e);
   }
-
-  const key = generateApiKey();
-  const stored = await insertApiKey({
-    userId: user.id,
-    name: input.key_name || "login",
-    key_prefix: key.key_prefix,
-    key_hash: key.key_hash,
-  });
-
-  return formatBuyerResult({
-    userId: user.id,
-    email: user.email || email,
-    comprador,
-    stored,
-    key,
-    extra: {
-      access_token: data.session?.access_token || null,
-      note: "API key emitida para conta existente. O JWT (access_token) também autentica se AUTH_MODE incluir supabase_jwt.",
-    },
-  });
 }
 
 /**
@@ -235,24 +249,28 @@ export async function loginBuyer(input = {}) {
  */
 export async function issueApiKeyForUser(userId, { name = "agent" } = {}) {
   if (!userId) throw AppError.unauthorized();
-  const comprador = await getCompradorById(userId);
-  if (!comprador) {
-    throw AppError.forbidden("Usuário sem perfil comprador");
+  try {
+    const comprador = await getCompradorById(userId);
+    if (!comprador) {
+      throw AppError.forbidden("Usuário sem perfil comprador");
+    }
+    const key = generateApiKey();
+    const stored = await insertApiKey({
+      userId,
+      name,
+      key_prefix: key.key_prefix,
+      key_hash: key.key_hash,
+    });
+    return {
+      id: stored.id,
+      name: stored.name,
+      key_prefix: stored.key_prefix,
+      key: key.plaintext,
+      warning: "Guarde esta chave agora. Ela não será exibida novamente.",
+    };
+  } catch (e) {
+    rethrowMapped(e);
   }
-  const key = generateApiKey();
-  const stored = await insertApiKey({
-    userId,
-    name,
-    key_prefix: key.key_prefix,
-    key_hash: key.key_hash,
-  });
-  return {
-    id: stored.id,
-    name: stored.name,
-    key_prefix: stored.key_prefix,
-    key: key.plaintext,
-    warning: "Guarde esta chave agora. Ela não será exibida novamente.",
-  };
 }
 
 export async function getProfile(userId) {

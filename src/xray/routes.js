@@ -15,7 +15,9 @@ import {
 import { maybeEnqueueFromSearch } from "../telemetry/enqueue.js";
 import { getConsultaById, getAparicoesAgg } from "../db/repositories/consultasRepo.js";
 import { isSupabaseConfigured } from "../db/supabaseAdmin.js";
+import { probeApiKeysTable } from "../db/repositories/compradorRepo.js";
 import { AppError } from "../errors/AppError.js";
+import { getAuthModes } from "../config/env.js";
 
 /**
  * Rotas X-Ray — chat + auth/onboarding + probes Supabase.
@@ -51,11 +53,21 @@ export function createXrayRouter() {
       } catch {
         auth = { authenticated: false, provider: "anonymous", roles: [], comprador: null };
       }
+      const apiKeys = await probeApiKeysTable();
       return res.json({
         supabase_configured: isSupabaseConfigured(),
+        api_keys_table: apiKeys,
         auth: publicAuthView(auth),
         config_auth: getPublicConfig().auth,
+        auth_modes_env: getAuthModes(),
         supabase: getPublicConfig().supabase,
+        hints: {
+          first_key: "Use Criar conta ou Já tenho conta — não o botão Emitir nova key",
+          auth_mode: "AUTH_MODE deve ser api_key,supabase_jwt (não off)",
+          migration: apiKeys.ok
+            ? null
+            : "Rode sql/migrations/001_api_keys_aparicoes.sql no Supabase SQL Editor",
+        },
       });
     } catch (err) {
       return next(err);

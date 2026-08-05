@@ -780,10 +780,13 @@ export function getSearchXrayHtml() {
         const res = await fetch("/search/xray/auth/status", { headers: authHeaders() });
         const data = await res.json();
         const a = data.auth || {};
-        $("authBadge").textContent = a.authenticated
-          ? ("auth: " + (a.provider || "?") + (a.comprador ? " · comprador" : ""))
-          : ("auth: off · supabase " + (data.supabase_configured ? "ok" : "off"));
-        $("authBadge").className = "badge " + (a.authenticated ? "ok" : "warn");
+        const modes = (data.auth_modes_env || data.config_auth?.modes || []).join(",") || (data.config_auth?.mode || "?");
+        const sess = a.authenticated
+          ? ((a.provider || "?") + (a.comprador ? " · comprador" : ""))
+          : "sessão anônima";
+        const mig = data.api_keys_table?.ok === false ? " · api_keys FALTA" : "";
+        $("authBadge").textContent = "mode:" + modes + " · " + sess + " · supabase " + (data.supabase_configured ? "ok" : "off") + mig;
+        $("authBadge").className = "badge " + (a.authenticated ? "ok" : (data.api_keys_table?.ok === false ? "err" : "warn"));
         return data;
       } catch (e) {
         $("authBadge").textContent = "auth: erro";

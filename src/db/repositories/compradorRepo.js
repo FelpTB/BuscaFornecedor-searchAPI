@@ -4,6 +4,7 @@
 
 import { getSupabaseAdmin, isSupabaseConfigured } from "../supabaseAdmin.js";
 import { AppError } from "../../errors/AppError.js";
+import { mapSupabaseError } from "../mapSupabaseError.js";
 
 const SCHEMA = "busca_fornecedor";
 
@@ -15,6 +16,23 @@ function adminOrThrow() {
     );
   }
   return sb;
+}
+
+/** Probe: api_keys acessível? */
+export async function probeApiKeysTable() {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, reason: "supabase_not_configured" };
+  }
+  try {
+    const sb = getSupabaseAdmin();
+    const { error } = await sb.schema(SCHEMA).from("api_keys").select("id").limit(1);
+    if (error) {
+      return { ok: false, reason: error.message, code: error.code };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e.message || String(e) };
+  }
 }
 
 export async function getCompradorById(userId) {
@@ -52,9 +70,10 @@ export async function createCompradorProfile({
   };
   const { data, error } = await sb.schema(SCHEMA).from("usuario_comprador").insert(row).select().single();
   if (error) {
-    const err = new Error(`create comprador: ${error.message}`);
-    err.code = error.code;
-    throw err;
+    throw mapSupabaseError(
+      Object.assign(new Error(error.message), { code: error.code }),
+      "create comprador",
+    );
   }
   return data;
 }
@@ -100,9 +119,10 @@ export async function insertApiKey({
     .select("id, key_prefix, name, created_at")
     .single();
   if (error) {
-    const err = new Error(`insert api_key: ${error.message}`);
-    err.code = error.code;
-    throw err;
+    throw mapSupabaseError(
+      Object.assign(new Error(error.message), { code: error.code }),
+      "insert api_key",
+    );
   }
   return data;
 }
