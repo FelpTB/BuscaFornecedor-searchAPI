@@ -4,7 +4,8 @@
 **URL:** https://hccolkrnyrxcbxuuajwq.supabase.co
 
 Documentação de usuários e identidade: [`supabase-users.md`](supabase-users.md).  
-**Plano de implementação (auth + histórico + aparições):** [`plano-supabase-auth.md`](plano-supabase-auth.md).  
+**Plano:** [`plano-supabase-auth.md`](plano-supabase-auth.md).  
+**Implementação entregue:** [`implementacao-supabase.md`](implementacao-supabase.md).  
 ADR: [`010-supabase-hybrid-auth-telemetry.md`](../adr/010-supabase-hybrid-auth-telemetry.md).  
 Skill Cursor: `.cursor/skills/supabase-db/`.
 
@@ -33,5 +34,5 @@ Identidade Auth: **`auth.users`** (FK alvo dos perfis).
 
 ## Status no código deste repo
 
-Sem client Supabase runtime ainda. `AUTH_MODE` local (`off` / `api_key` env).  
-Próximo: fases S0–S3 em [`plano-supabase-auth.md`](plano-supabase-auth.md).
+Client Supabase + telemetria async + X-Ray Conta **implementados**.  
+Ativar com migration [`sql/migrations/001_api_keys_aparicoes.sql`](../sql/migrations/001_api_keys_aparicoes.sql) e secrets no Railway.
