@@ -1,51 +1,83 @@
--- Migration: api_keys + aparicoes (+ agg)
--- Schema: busca_fornecedor
--- Rollback: DROP TABLE IF EXISTS busca_fornecedor.aparicoes_cnpj_agg, busca_fornecedor.aparicoes, busca_fornecedor.api_keys;
+-- =============================================================================
+-- Migration: api_keys para autenticação da API+MCP (BuscaFornecedor)
+-- Projeto: abcAdvise (hccolkrnyrxcbxuuajwq)
+-- Schema live: busca_fornecedor
+--
+-- Contexto (introspecção 2026-08-05):
+--   • auth.users = identidade
+--   • usuario_comprador / usuario_fornecedor / app_admins = perfis
+--   • consultas = histórico de buscas (já existe)
+--   • aparicoes = JÁ EXISTE (~137k rows) com cnpj_basico/ordem/dv — NÃO recriar
+--   • contador_aparicoes = JÁ EXISTE (agg por CNPJ básico) — NÃO criar aparicoes_cnpj_agg
+--   • api_keys = AUSENTE → esta migration cria
+--
+-- Rollback:
+--   DROP TABLE IF EXISTS busca_fornecedor.api_keys;
+-- =============================================================================
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 CREATE TABLE IF NOT EXISTS busca_fornecedor.api_keys (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   name text NOT NULL DEFAULT 'default',
   key_prefix text NOT NULL,
-  key_hash text NOT NULL UNIQUE,
+  key_hash text NOT NULL,
   scopes text[] NOT NULL DEFAULT ARRAY['search']::text[],
   active boolean NOT NULL DEFAULT true,
   last_used_at timestamptz,
   expires_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  revoked_at timestamptz
+  revoked_at timestamptz,
+  CONSTRAINT api_keys_key_hash_unique UNIQUE (key_hash)
 );
 
-CREATE INDEX IF NOT EXISTS api_keys_user_id_idx
+COMMENT ON TABLE busca_fornecedor.api_keys IS
+  'API keys hasheadas (sk_bf_…) para agentes/MCP/X-Ray. Plaintext nunca é persistido.';
+
+COMMENT ON COLUMN busca_fornecedor.api_keys.key_prefix IS
+  'Prefixo público para exibição (ex.: sk_bf_xxxxxx), não é secreto.';
+
+COMMENT ON COLUMN busca_fornecedor.api_keys.key_hash IS
+  'SHA-256 hex da key plaintext.';
+
+CREATE INDEX IF NOT EXISTS api_keys_user_id_active_idx
   ON busca_fornecedor.api_keys (user_id)
   WHERE active = true AND revoked_at IS NULL;
 
-CREATE TABLE IF NOT EXISTS busca_fornecedor.aparicoes (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  consulta_id uuid NOT NULL REFERENCES busca_fornecedor.consultas(id) ON DELETE CASCADE,
-  comprador_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  cnpj text NOT NULL,
-  nome_empresa text,
-  posicao int,
-  score_final numeric,
-  cidade text,
-  uf text,
-  origem text,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
+CREATE INDEX IF NOT EXISTS api_keys_key_hash_active_idx
+  ON busca_fornecedor.api_keys (key_hash)
+  WHERE active = true AND revoked_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS aparicoes_cnpj_created_idx
-  ON busca_fornecedor.aparicoes (cnpj, created_at DESC);
-CREATE INDEX IF NOT EXISTS aparicoes_consulta_idx
-  ON busca_fornecedor.aparicoes (consulta_id);
-CREATE INDEX IF NOT EXISTS aparicoes_comprador_idx
-  ON busca_fornecedor.aparicoes (comprador_id, created_at DESC);
+-- RLS: backend usa service_role (bypass). Policies defensivas para roles de cliente.
+ALTER TABLE busca_fornecedor.api_keys ENABLE ROW LEVEL SECURITY;
 
-CREATE TABLE IF NOT EXISTS busca_fornecedor.aparicoes_cnpj_agg (
-  cnpj text PRIMARY KEY,
-  total bigint NOT NULL DEFAULT 0,
-  last_seen_at timestamptz NOT NULL DEFAULT now()
-);
+DROP POLICY IF EXISTS "api_keys_select_own" ON busca_fornecedor.api_keys;
+CREATE POLICY "api_keys_select_own"
+  ON busca_fornecedor.api_keys
+  FOR SELECT
+  TO authenticated
+  USING (user_id = auth.uid());
 
--- Depois desta migration, rode também 002_schema_grants.sql
--- (permission denied em usuario_comprador / api_keys = grants ausentes).
+DROP POLICY IF EXISTS "api_keys_no_anon" ON busca_fornecedor.api_keys;
+CREATE POLICY "api_keys_no_anon"
+  ON busca_fornecedor.api_keys
+  FOR ALL
+  TO anon
+  USING (false)
+  WITH CHECK (false);
+
+-- Grants (PostgREST + service_role). service_role bypassa RLS.
+GRANT USAGE ON SCHEMA busca_fornecedor TO postgres, anon, authenticated, service_role;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE busca_fornecedor.api_keys TO service_role;
+GRANT SELECT ON TABLE busca_fornecedor.api_keys TO authenticated;
+
+-- Garante acesso de serviço às tabelas que a API já usa
+GRANT SELECT, INSERT, UPDATE ON TABLE busca_fornecedor.usuario_comprador TO service_role;
+GRANT SELECT, INSERT, UPDATE ON TABLE busca_fornecedor.consultas TO service_role;
+GRANT SELECT, INSERT, UPDATE ON TABLE busca_fornecedor.aparicoes TO service_role;
+GRANT SELECT, INSERT, UPDATE ON TABLE busca_fornecedor.contador_aparicoes TO service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA busca_fornecedor
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO service_role;

@@ -1,14 +1,31 @@
 /**
  * Persistência de consultas + aparições (cold path).
+ * Alinhado ao schema live abcAdvise (busca_fornecedor):
+ *   - consultas (já existia)
+ *   - aparicoes (cnpj_basico/ordem/dv — NÃO a versão flat antiga do PLANO)
+ *   - contador_aparicoes (agg por CNPJ básico de 8 dígitos)
  */
 
 import { getSupabaseAdmin, isSupabaseConfigured } from "../supabaseAdmin.js";
 import { getPgPool } from "../pgPool.js";
+import { logWarn } from "../../logger.js";
 
 const SCHEMA = "busca_fornecedor";
 
 function digitsOnly(cnpj) {
   return String(cnpj || "").replace(/\D/g, "");
+}
+
+/** Quebra CNPJ 14 dígitos no formato do schema live. */
+export function splitCnpjParts(cnpj) {
+  const d = digitsOnly(cnpj);
+  if (d.length === 14) {
+    return { basico: d.slice(0, 8), ordem: d.slice(8, 12), dv: d.slice(12, 14) };
+  }
+  if (d.length === 8) {
+    return { basico: d, ordem: null, dv: null };
+  }
+  return null;
 }
 
 /** Allowlist de resultado para jsonb. */
@@ -108,32 +125,46 @@ async function persistWithPg(pool, event) {
       [event.user_id],
     );
 
+    let aparicoesOk = 0;
     for (const row of results) {
-      const cnpj = digitsOnly(row.cnpj);
-      if (!cnpj) continue;
+      const parts = splitCnpjParts(row.cnpj);
+      if (!parts?.basico) continue;
+
+      // Schema live: aparicoes(cnpj_basico, cnpj_ordem, cnpj_dv, nota, revelada)
+      // FK para company_profile/estabelecimento pode falhar — contador ainda é atualizado
+      try {
+        if (parts.ordem && parts.dv) {
+          await client.query(
+            `INSERT INTO busca_fornecedor.aparicoes (
+              consulta_id, comprador_id, cnpj_basico, cnpj_ordem, cnpj_dv, nota, revelada
+            ) VALUES ($1,$2,$3,$4,$5,$6,false)
+            ON CONFLICT (consulta_id, cnpj_basico, cnpj_ordem, cnpj_dv) DO NOTHING`,
+            [
+              event.search_id,
+              event.user_id,
+              parts.basico,
+              parts.ordem,
+              parts.dv,
+              Math.round(Number(row.posicao) || 0),
+            ],
+          );
+          aparicoesOk += 1;
+        }
+      } catch (e) {
+        logWarn("aparicoes", "insert skipped (FK/schema)", {
+          cnpj_basico: parts.basico,
+          message: e.message,
+          code: e.code,
+        });
+      }
+
       await client.query(
-        `INSERT INTO busca_fornecedor.aparicoes (
-          consulta_id, comprador_id, cnpj, nome_empresa, posicao, score_final, cidade, uf, origem
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [
-          event.search_id,
-          event.user_id,
-          cnpj,
-          row.nome_empresa,
-          row.posicao,
-          row.score_final,
-          row.cidade,
-          row.uf,
-          event.source || "api",
-        ],
-      );
-      await client.query(
-        `INSERT INTO busca_fornecedor.aparicoes_cnpj_agg (cnpj, total, last_seen_at)
-         VALUES ($1, 1, now())
+        `INSERT INTO busca_fornecedor.contador_aparicoes (cnpj, n_aparicoes, limite_aparicoes, updated_at)
+         VALUES ($1, 1, 999, CURRENT_DATE)
          ON CONFLICT (cnpj) DO UPDATE
-         SET total = busca_fornecedor.aparicoes_cnpj_agg.total + 1,
-             last_seen_at = now()`,
-        [cnpj],
+         SET n_aparicoes = COALESCE(busca_fornecedor.contador_aparicoes.n_aparicoes, 0) + 1,
+             updated_at = CURRENT_DATE`,
+        [parts.basico],
       );
     }
 
@@ -141,7 +172,7 @@ async function persistWithPg(pool, event) {
     return {
       ok: true,
       search_id: event.search_id,
-      aparicoes: results.filter((r) => digitsOnly(r.cnpj)).length,
+      aparicoes: aparicoesOk,
       via: "pg",
     };
   } catch (e) {
@@ -211,55 +242,57 @@ async function persistWithSupabaseJs(event) {
       .eq("id", event.user_id);
   }
 
-  const aparicoes = [];
+  let aparicoesOk = 0;
   for (const r of results) {
-    const cnpj = digitsOnly(r.cnpj);
-    if (!cnpj) continue;
-    aparicoes.push({
-      consulta_id: event.search_id,
-      comprador_id: event.user_id,
-      cnpj,
-      nome_empresa: r.nome_empresa,
-      posicao: r.posicao,
-      score_final: r.score_final,
-      cidade: r.cidade,
-      uf: r.uf,
-      origem: event.source || "api",
-    });
-  }
+    const parts = splitCnpjParts(r.cnpj);
+    if (!parts?.basico) continue;
 
-  if (aparicoes.length) {
-    const { error: apErr } = await sb.schema(SCHEMA).from("aparicoes").insert(aparicoes);
-    if (apErr && !String(apErr.message).includes("does not exist")) {
-      throw new Error(`aparicoes insert: ${apErr.message}`);
-    }
-    for (const a of aparicoes) {
-      const { data: agg } = await sb
-        .schema(SCHEMA)
-        .from("aparicoes_cnpj_agg")
-        .select("total")
-        .eq("cnpj", a.cnpj)
-        .maybeSingle();
-      if (agg) {
-        await sb
-          .schema(SCHEMA)
-          .from("aparicoes_cnpj_agg")
-          .update({ total: Number(agg.total) + 1, last_seen_at: new Date().toISOString() })
-          .eq("cnpj", a.cnpj);
-      } else {
-        await sb.schema(SCHEMA).from("aparicoes_cnpj_agg").insert({
-          cnpj: a.cnpj,
-          total: 1,
-          last_seen_at: new Date().toISOString(),
-        });
+    if (parts.ordem && parts.dv) {
+      const { error: apErr } = await sb.schema(SCHEMA).from("aparicoes").insert({
+        consulta_id: event.search_id,
+        comprador_id: event.user_id,
+        cnpj_basico: parts.basico,
+        cnpj_ordem: parts.ordem,
+        cnpj_dv: parts.dv,
+        nota: Math.round(Number(r.posicao) || 0),
+        revelada: false,
+      });
+      if (!apErr) aparicoesOk += 1;
+      else if (!/duplicate|23505/i.test(apErr.message || "")) {
+        logWarn("aparicoes", "insert skipped", { message: apErr.message, code: apErr.code });
       }
+    }
+
+    const { data: agg } = await sb
+      .schema(SCHEMA)
+      .from("contador_aparicoes")
+      .select("id, n_aparicoes")
+      .eq("cnpj", parts.basico)
+      .maybeSingle();
+
+    if (agg) {
+      await sb
+        .schema(SCHEMA)
+        .from("contador_aparicoes")
+        .update({
+          n_aparicoes: Number(agg.n_aparicoes || 0) + 1,
+          updated_at: new Date().toISOString().slice(0, 10),
+        })
+        .eq("id", agg.id);
+    } else {
+      await sb.schema(SCHEMA).from("contador_aparicoes").insert({
+        cnpj: parts.basico,
+        n_aparicoes: 1,
+        limite_aparicoes: 999,
+        updated_at: new Date().toISOString().slice(0, 10),
+      });
     }
   }
 
   return {
     ok: true,
     search_id: event.search_id,
-    aparicoes: aparicoes.length,
+    aparicoes: aparicoesOk,
     via: "supabase-js",
   };
 }
@@ -270,18 +303,26 @@ function toTextArray(value) {
   return [String(value)];
 }
 
+/** Lê agg live: contador_aparicoes (cnpj = 8 dígitos básicos). */
 export async function getAparicoesAgg(cnpj) {
   if (!isSupabaseConfigured()) return null;
   const sb = getSupabaseAdmin();
   const dig = digitsOnly(cnpj);
+  const basico = dig.length >= 8 ? dig.slice(0, 8) : dig;
   const { data, error } = await sb
     .schema(SCHEMA)
-    .from("aparicoes_cnpj_agg")
-    .select("cnpj, total, last_seen_at")
-    .eq("cnpj", dig)
+    .from("contador_aparicoes")
+    .select("cnpj, n_aparicoes, limite_aparicoes, updated_at")
+    .eq("cnpj", basico)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return data;
+  if (!data) return { cnpj: basico, total: 0 };
+  return {
+    cnpj: data.cnpj,
+    total: Number(data.n_aparicoes || 0),
+    limite: Number(data.limite_aparicoes || 0),
+    updated_at: data.updated_at,
+  };
 }
 
 export async function getConsultaById(searchId) {

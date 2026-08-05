@@ -31,7 +31,7 @@ busca_fornecedor.plan_rank           → pesos de plano do fornecedor
 | `consultas` | Buscas já persistidas (site/WhatsApp etc.) |
 | `plan_rank` | Lookup `plano_categoria` → `peso` |
 
-**Não existe** tabela `api_keys` (ainda). O PLANO previa keys com hash — seria migration nova, ou a API autentica via **JWT Supabase** dos users existentes.
+**`api_keys`:** criada em 2026-08-05 (`busca_fornecedor.api_keys`) para agentes/MCP (`sk_bf_…` hasheada). JWT Supabase continua válido em paralelo.
 
 Papéis são **disjuntos** nos dados atuais: `both_roles = 0` (ninguém é comprador e fornecedor ao mesmo tempo). ~12 `auth.users` sem perfil BF.
 

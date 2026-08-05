@@ -1,51 +1,28 @@
--- Migration: grants no schema busca_fornecedor para a API (service_role)
--- Necessário para PostgREST/Supabase JS: .schema('busca_fornecedor').from(...)
--- Também: Dashboard → Settings → API → Exposed schemas → incluir "busca_fornecedor"
+-- =============================================================================
+-- Migration: grants / notas pós api_keys (idempotente)
+-- A maior parte dos grants já está em 001. Este arquivo reforça USAGE/ALL
+-- e documenta que aparicoes + contador_aparicoes JÁ EXISTEM no live.
 --
--- Erro típico sem isto:
---   permission denied for table usuario_comprador
---   permission denied for table api_keys
+-- NÃO cria aparicoes nem aparicoes_cnpj_agg.
+-- =============================================================================
 
 GRANT USAGE ON SCHEMA busca_fornecedor TO postgres, anon, authenticated, service_role;
 
-GRANT ALL ON ALL TABLES IN SCHEMA busca_fornecedor TO postgres, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA busca_fornecedor TO postgres, service_role;
-GRANT ALL ON ALL ROUTINES IN SCHEMA busca_fornecedor TO postgres, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE busca_fornecedor.api_keys TO service_role;
+GRANT SELECT ON TABLE busca_fornecedor.api_keys TO authenticated;
 
--- Leitura/escrita básica para roles autenticadas (ajuste RLS depois se necessário)
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA busca_fornecedor TO authenticated;
-GRANT SELECT ON ALL TABLES IN SCHEMA busca_fornecedor TO anon;
+GRANT SELECT, INSERT, UPDATE ON TABLE busca_fornecedor.usuario_comprador TO service_role;
+GRANT SELECT, INSERT, UPDATE ON TABLE busca_fornecedor.consultas TO service_role;
+GRANT SELECT, INSERT, UPDATE ON TABLE busca_fornecedor.aparicoes TO service_role;
+GRANT SELECT, INSERT, UPDATE ON TABLE busca_fornecedor.contador_aparicoes TO service_role;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA busca_fornecedor
-  GRANT ALL ON TABLES TO postgres, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA busca_fornecedor
-  GRANT ALL ON SEQUENCES TO postgres, service_role;
-
--- Garante privilégios nas tabelas críticas da API+MCP
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
-  busca_fornecedor.usuario_comprador
-TO service_role, authenticated;
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
-  busca_fornecedor.api_keys
-TO service_role;
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
-  busca_fornecedor.consultas
-TO service_role, authenticated;
-
+-- Sequência do contador (se existir)
 DO $$
+DECLARE
+  seq text;
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'busca_fornecedor' AND table_name = 'aparicoes'
-  ) THEN
-    EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE busca_fornecedor.aparicoes TO service_role';
-  END IF;
-  IF EXISTS (
-    SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'busca_fornecedor' AND table_name = 'aparicoes_cnpj_agg'
-  ) THEN
-    EXECUTE 'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE busca_fornecedor.aparicoes_cnpj_agg TO service_role';
+  SELECT pg_get_serial_sequence('busca_fornecedor.contador_aparicoes', 'id') INTO seq;
+  IF seq IS NOT NULL THEN
+    EXECUTE format('GRANT USAGE, SELECT ON SEQUENCE %s TO service_role', seq);
   END IF;
 END $$;

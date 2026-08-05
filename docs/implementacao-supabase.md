@@ -42,10 +42,10 @@
 
 ## Como ligar (checklist)
 
-1. Rodar migrations no Supabase SQL Editor (nessa ordem):
-   - [`sql/migrations/001_api_keys_aparicoes.sql`](../sql/migrations/001_api_keys_aparicoes.sql)
-   - [`sql/migrations/002_schema_grants.sql`](../sql/migrations/002_schema_grants.sql) ← grants `service_role` em `usuario_comprador` / `api_keys`
-2. Dashboard → **Settings → API → Exposed schemas**: incluir `busca_fornecedor` (além de `public`)
+1. Rodar migrations no Supabase (já aplicadas no abcAdvise via MCP em 2026-08-05):
+   - [`sql/migrations/001_api_keys_aparicoes.sql`](../sql/migrations/001_api_keys_aparicoes.sql) — cria `api_keys` (não recria `aparicoes`; tabela live já existe)
+   - [`sql/migrations/002_schema_grants.sql`](../sql/migrations/002_schema_grants.sql)
+2. Dashboard → **Settings → API → Exposed schemas**: incluir `busca_fornecedor`
 3. Railway / `.env`:
    - `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
    - `SUPABASE_ANON_KEY` (login email+senha)
@@ -56,7 +56,7 @@
 4. Abrir `/search/xray` → Conta → criar conta **ou** entrar com conta existente → colar key → conversar/buscar
 5. Copiar `search_id` → probe “Ver consulta”
 
-Erro comum: `permission denied for table usuario_comprador` → falta o passo 1 (002) e/ou o passo 2.
+Telemetria de aparições usa tabelas **live** `aparicoes` + `contador_aparicoes` (não `aparicoes_cnpj_agg`).
 
 ---
 

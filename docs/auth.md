@@ -135,13 +135,23 @@ Resultado: `req.auth` / `AuthContext`:
 
 ---
 
-## 8. Migrations obrigatórias (ordem)
+## 8. Migrations obrigatórias
 
-1. **`001_api_keys_aparicoes.sql`** — cria `api_keys`, `aparicoes`, `aparicoes_cnpj_agg`  
-2. **`002_schema_grants.sql`** — GRANT para `service_role`  
-3. Dashboard → Settings → API → **Exposed schemas** → incluir `busca_fornecedor`
+Aplicadas no projeto **abcAdvise** via Supabase MCP (2026-08-05):
 
-Erro atual `42P01 relation "busca_fornecedor.api_keys" does not exist` = passo 1 ainda não aplicado neste banco.
+1. **`001_api_keys_aparicoes.sql`** → cria só `busca_fornecedor.api_keys` (+ RLS/grants)  
+2. **`002_schema_grants.sql`** → reforça grants  
+
+**Não recria** `aparicoes` nem `aparicoes_cnpj_agg` — no live já existem:
+
+| Tabela live | Uso |
+|-------------|-----|
+| `aparicoes` | Hits por consulta (`cnpj_basico`/`ordem`/`dv`, ~137k rows) |
+| `contador_aparicoes` | Agg por CNPJ básico (8 dígitos) |
+
+A telemetria da API grava nessas tabelas (não em `aparicoes_cnpj_agg`).
+
+Dashboard → Settings → API → **Exposed schemas** → incluir `busca_fornecedor` (para PostgREST; inserts de key usam `DATABASE_URL`/pg).
 
 ---
 
