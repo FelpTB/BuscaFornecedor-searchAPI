@@ -357,8 +357,11 @@ process.env.QDRANT_DIMENSION_KEYS =
   ]);
   assert.equal(mapped[0].local, "SP · Campinas");
   assert.equal(mapped[0].site, "https://www.acme.com.br");
+  assert.equal(mapped[0].site_md, "[acme.com.br](https://www.acme.com.br)");
   assert.equal(mapped[0].perfil_url, "https://buscafornecedor.com.br/perfil/12345678");
+  assert.equal(mapped[0].perfil_md, "[Perfil ACME](https://buscafornecedor.com.br/perfil/12345678)");
   assert.equal(mapped[0].cnpj_basico, "12345678");
+  assert.equal(localFromPayload({ uf: "al", cidade: "MACEIO" }), "AL · Maceio");
   console.log("OK result display mapping");
 }
 

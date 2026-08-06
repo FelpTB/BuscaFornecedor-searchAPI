@@ -1,13 +1,13 @@
 /**
  * Padronização de exibição de resultados de fornecedor (chat + X-Ray).
  *
- * Campos ao usuário:
- * - Nome da empresa
- * - Local: UF · Cidade
- * - Modelo de Negócio
- * - Descrição
- * - Site (se houver)
- * - Perfil BuscaFornecedor: https://buscafornecedor.com.br/perfil/{cnpj_basico}
+ * Formato markdown esperado no chat:
+ * N. **Nome**
+ *    - **Local:** UF · Cidade
+ *    - **Modelo de Negócio:** …
+ *    - **Descrição:** …
+ *    - **Site:** [dominio.com.br](https://…)
+ *    - **Perfil:** [Perfil Nome](https://buscafornecedor.com.br/perfil/…)
  */
 
 export const PERFIL_BASE_URL = "https://buscafornecedor.com.br/perfil";
@@ -21,8 +21,20 @@ export function digitsOnly(value) {
 }
 
 /**
+ * Se o texto vier TODO EM CAPS, aplica title-case suave.
+ * @param {string} s
+ */
+export function softTitleCase(s) {
+  const t = String(s || "").trim();
+  if (!t) return t;
+  if (t !== t.toUpperCase()) return t;
+  return t
+    .toLowerCase()
+    .replace(/(^|[\s'/.-])(\p{L})/gu, (_, sep, ch) => sep + ch.toUpperCase());
+}
+
+/**
  * CNPJ básico (8 dígitos) para URL de perfil.
- * Aceita cnpj_basico, cnpj completo (14) ou formatado.
  * @param {object} payload
  * @returns {string|null}
  */
@@ -62,6 +74,23 @@ export function normalizeSiteUrl(raw) {
 }
 
 /**
+ * Rótulo curto do site (hostname sem www).
+ * @param {string|null} url
+ * @returns {string|null}
+ */
+export function siteLabelFromUrl(url) {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./i, "");
+  } catch {
+    return String(url)
+      .replace(/^https?:\/\//i, "")
+      .replace(/^www\./i, "")
+      .split("/")[0] || null;
+  }
+}
+
+/**
  * @param {object} payload
  * @returns {string|null}
  */
@@ -72,20 +101,42 @@ export function siteFromPayload(payload = {}) {
 }
 
 /**
- * Local com UF na frente: "RS · Novo Hamburgo"
+ * Local com UF na frente: "AL · Maceio"
  * @param {object} payload
  * @returns {string|null}
  */
 export function localFromPayload(payload = {}) {
   const uf = typeof payload.uf === "string" ? payload.uf.trim().toUpperCase() : "";
-  const cidade =
+  const rawCity =
     (typeof payload.cidade === "string" && payload.cidade.trim()) ||
     (typeof payload.municipio === "string" && payload.municipio.trim()) ||
     "";
+  const cidade = softTitleCase(rawCity);
   if (uf && cidade) return `${uf} · ${cidade}`;
   if (uf) return uf;
   if (cidade) return cidade;
   return null;
+}
+
+/**
+ * Markdown pronto: [dominio](url)
+ * @param {string|null} url
+ */
+export function siteMarkdown(url) {
+  if (!url) return null;
+  const label = siteLabelFromUrl(url) || url;
+  return `[${label}](${url})`;
+}
+
+/**
+ * Markdown pronto: [Perfil Nome](url)
+ * @param {string|null} nome
+ * @param {string|null} url
+ */
+export function perfilMarkdown(nome, url) {
+  if (!url) return null;
+  const label = nome ? `Perfil ${softTitleCase(nome)}` : "Perfil no Busca Fornecedor";
+  return `[${label}](${url})`;
 }
 
 /**
@@ -103,35 +154,44 @@ export function mapResultsForDisplay(results, limit = 20) {
           ? p.descricao_empresa.trim()
           : null;
     const cnpjBasico = cnpjBasicoFromPayload(p);
+    const nome =
+      (typeof p.nome_empresa === "string" && p.nome_empresa.trim()) ||
+      (typeof p.razao_social === "string" && p.razao_social.trim()) ||
+      null;
+    const site = siteFromPayload(p);
+    const perfil_url = profileUrlFromPayload(p);
     return {
       posicao: r.posicao ?? i + 1,
-      nome_empresa:
-        (typeof p.nome_empresa === "string" && p.nome_empresa.trim()) ||
-        (typeof p.razao_social === "string" && p.razao_social.trim()) ||
-        null,
+      nome_empresa: nome,
       local: localFromPayload(p),
       modelo_negocio:
         typeof p.modelo_negocio === "string" && p.modelo_negocio.trim()
           ? p.modelo_negocio.trim()
           : null,
       descricao: descricao ? descricao.slice(0, 400) : null,
-      site: siteFromPayload(p),
-      perfil_url: profileUrlFromPayload(p),
-      // interno — não exibir CNPJ solto na conversa; só para montar perfil
+      site,
+      site_label: siteLabelFromUrl(site),
+      site_md: siteMarkdown(site),
+      perfil_url,
+      perfil_md: perfilMarkdown(nome, perfil_url),
       cnpj_basico: cnpjBasico,
     };
   });
 }
 
 /** Instrução fixa no system prompt do agente. */
-export const RESULT_DISPLAY_PROMPT = `Formato OBRIGATÓRIO ao listar fornecedores (não invente campos; omita linha se valor null):
+export const RESULT_DISPLAY_PROMPT = `Formato OBRIGATÓRIO ao listar fornecedores (não invente campos; omita a linha se o valor for null):
+
 N. **{nome_empresa}**
-   - **Local:** {local}   ← já vem como "UF · Cidade" (UF na frente)
+   - **Local:** {local}
    - **Modelo de Negócio:** {modelo_negocio}
    - **Descrição:** {descricao}
-   - **Site:** {site}     ← só se site não for null
-   - **Perfil:** {perfil_url}
+   - **Site:** {site_md}
+   - **Perfil:** {perfil_md}
 
-Não liste CNPJ como campo separado (o Perfil já usa o CNPJ básico).
-Não use negrito em todos os rótulos além do padrão acima.
-Use exatamente os campos do array "top" retornado pela tool (nome_empresa, local, modelo_negocio, descricao, site, perfil_url).`;
+Regras:
+- Use site_md e perfil_md EXATAMENTE como vieram na tool (já são links markdown [texto](url)).
+- NÃO cole URL crua no lugar do link; NÃO liste CNPJ como campo separado.
+- Exemplo de Site: [casaazevedoribeiro.com.br](https://casaazevedoribeiro.com.br)
+- Exemplo de Perfil: [Perfil Casa Azevedo Ribeiro](https://buscafornecedor.com.br/perfil/16806116)
+- Campos da tool: nome_empresa, local, modelo_negocio, descricao, site_md, perfil_md.`;

@@ -96,11 +96,11 @@ export function getSearchXrayHtml() {
     }
     .bubble {
       max-width: 92%; padding: 0.7rem 0.85rem; border-radius: 12px;
-      white-space: pre-wrap; word-break: break-word; font-size: 0.92rem;
+      word-break: break-word; font-size: 0.92rem; line-height: 1.55;
     }
     .bubble.user {
       align-self: flex-end; background: var(--user); border: 1px solid #2d4a73;
-      border-bottom-right-radius: 4px;
+      border-bottom-right-radius: 4px; white-space: pre-wrap;
     }
     .bubble.assistant {
       align-self: flex-start; background: var(--bot); border: 1px solid var(--border);
@@ -108,9 +108,26 @@ export function getSearchXrayHtml() {
     }
     .bubble .who {
       display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
-      color: var(--muted); margin-bottom: 0.25rem; font-weight: 700;
+      color: var(--muted); margin-bottom: 0.35rem; font-weight: 700;
     }
-    .bubble.typing { color: var(--muted); font-style: italic; }
+    .bubble .md p { margin: 0 0 0.55rem; }
+    .bubble .md p:last-child { margin-bottom: 0; }
+    .bubble .md strong { color: #f1f5f9; font-weight: 650; }
+    .bubble .md a {
+      color: #7dd3fc; text-decoration: underline; text-underline-offset: 2px;
+    }
+    .bubble .md a:hover { color: #bae6fd; }
+    .bubble .md .md-p { margin: 0 0 0.45rem; }
+    .bubble .md .md-gap { height: 0.55rem; }
+    .bubble .md .md-item {
+      margin: 0.75rem 0 0.25rem; font-size: 0.98rem;
+    }
+    .bubble .md .md-item:first-child { margin-top: 0.25rem; }
+    .bubble .md .md-n { color: var(--muted); font-weight: 700; margin-right: 0.15rem; }
+    .bubble .md .md-li {
+      margin: 0.12rem 0 0.12rem 0.85rem; color: #d5deea; font-size: 0.9rem;
+    }
+    .bubble.typing { color: var(--muted); font-style: italic; white-space: pre-wrap; }
     .composer {
       border-top: 1px solid var(--border); padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;
       background: var(--panel);
@@ -417,6 +434,29 @@ export function getSearchXrayHtml() {
           '<button type="button" data-suggest="Quero limpeza industrial, mas ainda não sei a cidade">Limpeza · explorar</button>' +
         '</div></div>';
 
+    function mdToHtml(raw) {
+      const text = String(raw ?? "");
+      if (!text.trim()) return "";
+      let s = esc(text);
+      // [label](https://...)  — after esc, brackets/parens remain literal
+      s = s.replace(
+        /\\[([^\\]]+?)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g,
+        '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+      );
+      s = s.replace(/\\*\\*([^*]+?)\\*\\*/g, "<strong>$1</strong>");
+      return s.split("\\n").map((line) => {
+        const t = line.trim();
+        if (!t) return '<div class="md-gap"></div>';
+        if (/^\\d+\\.\\s+/.test(t)) {
+          return '<div class="md-item">' + t.replace(/^(\\d+)\\.\\s+/, '<span class="md-n">$1.</span> ') + "</div>";
+        }
+        if (/^[-*]\\s+/.test(t)) {
+          return '<div class="md-li">' + t.replace(/^[-*]\\s+/, "• ") + "</div>";
+        }
+        return '<div class="md-p">' + line + "</div>";
+      }).join("");
+    }
+
     function renderThread() {
       const thread = $("thread");
       const msgs = state.messages || [];
@@ -425,12 +465,17 @@ export function getSearchXrayHtml() {
         bindSuggestions();
         return;
       }
-      thread.innerHTML = msgs.map((m) =>
-        '<div class="bubble ' + esc(m.role) + '">' +
-          '<span class="who">' + (m.role === "user" ? "Você" : "Agente") + '</span>' +
-          esc(m.content) +
-        '</div>'
-      ).join("");
+      thread.innerHTML = msgs.map((m) => {
+        const body = m.role === "assistant"
+          ? ('<div class="md">' + mdToHtml(m.content) + "</div>")
+          : esc(m.content);
+        return (
+          '<div class="bubble ' + esc(m.role) + '">' +
+            '<span class="who">' + (m.role === "user" ? "Você" : "Agente") + "</span>" +
+            body +
+          "</div>"
+        );
+      }).join("");
       thread.scrollTop = thread.scrollHeight;
     }
 

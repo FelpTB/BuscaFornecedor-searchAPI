@@ -241,7 +241,7 @@ function summarizeSearchForLlm(plan, search) {
       : null,
     top: mapResultsForDisplay(results),
     display_format:
-      "nome_empresa · local(UF · Cidade) · modelo_negocio · descricao · site? · perfil_url",
+      "nome · local · modelo · descricao · site_md · perfil_md (links markdown)",
     hint:
       shortfall > 0
         ? "Faltaram resultados vs o pedido. PERGUNTE se o usuário quer busca mais geral; só chame expand_search_fallback após confirmação."
@@ -278,7 +278,7 @@ function summarizeFallbackForLlm(cascade, plan) {
     intent: plan?.intent ?? null,
     top: mapResultsForDisplay(cascade.results),
     display_format:
-      "nome_empresa · local(UF · Cidade) · modelo_negocio · descricao · site? · perfil_url",
+      "nome · local · modelo · descricao · site_md · perfil_md (links markdown)",
   };
 }
 
