@@ -279,11 +279,55 @@ process.env.QDRANT_DIMENSION_KEYS =
   });
   assert.equal(cascade.ok, true);
   assert.equal(cascade.fallback, true);
+  assert.equal(cascade.mode, "fill");
   assert.equal(cascade.result_count, 3);
   assert.equal(cascade.filled, true);
   assert.ok(cascade.expanded);
   assert.ok(calls >= 1);
   assert.ok(cascade.results.some((r) => r.payload.cnpj === "2"));
+
+  // Bug fix: cota já cheia (10/10) ainda deve ampliar o filtro e preferir NOVAS
+  let nationalCalls = 0;
+  let sawCityFilter = false;
+  const replaceCascade = await runFallbackCascade({
+    baseArgs: {
+      query: "polvo",
+      weights: { produto: 1 },
+      filter: { cidade: ["Varginha", "Tres Pontas"], uf: "MG" },
+      final_limit: 10,
+    },
+    plan: { geo: { uf: "MG", city_name: "Varginha" } },
+    existingResults: Array.from({ length: 10 }, (_, i) => ({
+      posicao: i + 1,
+      payload: { cnpj: `old${i}`, nome_empresa: `Old${i}`, cidade: "Varginha", uf: "MG" },
+    })),
+    finalLimit: 10,
+    scope: "nacional",
+    mode: "replace",
+    executeSearchByText: async (args) => {
+      nationalCalls += 1;
+      if (args.filter?.cidade) sawCityFilter = true;
+      assert.ok(!args.filter?.cidade, "nacional não pode manter filter.cidade");
+      assert.ok(!args.filter?.uf, "nacional não pode manter filter.uf");
+      assert.ok(Array.isArray(args.filter_not?.cnpj));
+      assert.equal(args.filter_not.cnpj.length, 10);
+      return {
+        results: [
+          { payload: { cnpj: "old0", nome_empresa: "dup" } },
+          { payload: { cnpj: "new1", nome_empresa: "Nacional A", uf: "SP" } },
+          { payload: { cnpj: "new2", nome_empresa: "Nacional B", uf: "RJ" } },
+        ],
+      };
+    },
+  });
+  assert.equal(nationalCalls, 1);
+  assert.equal(sawCityFilter, false);
+  assert.equal(replaceCascade.mode, "replace");
+  assert.equal(replaceCascade.expanded, true);
+  assert.equal(replaceCascade.new_count, 2);
+  assert.equal(replaceCascade.result_count, 2);
+  assert.ok(replaceCascade.results.every((r) => String(r.payload.cnpj).startsWith("new")));
+  assert.ok(!replaceCascade.results.some((r) => r.payload.cidade === "Varginha"));
   console.log("OK fallback cascade");
 }
 

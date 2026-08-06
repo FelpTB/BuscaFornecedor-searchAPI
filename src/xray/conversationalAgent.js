@@ -141,13 +141,25 @@ export const CHAT_TOOLS = [
     function: {
       name: "expand_search_fallback",
       description:
-        "Fallback Vector: amplia a ÚLTIMA busca da sessão (cidade → UF → nacional), excluindo CNPJs já listados, para tentar completar o final_limit. Chame SOMENTE após o usuário CONFIRMAR que quer uma busca mais geral, ou se ele pedir explicitamente expansão/busca estadual/nacional. NÃO chame automaticamente só porque faltaram resultados.",
+        "Amplia a ÚLTIMA busca mudando o filtro geográfico (remove cidade/raio; UF ou nacional) e exclui CNPJs já listados. OBRIGATÓRIO quando o usuário pedir busca estadual/nacional/mais geral — NÃO chame search_suppliers de novo com a mesma cidade. Use scope=nacional se pedir nacional; scope=uf se pedir estadual.",
       parameters: {
         type: "object",
         properties: {
+          scope: {
+            type: "string",
+            enum: ["auto", "uf", "nacional"],
+            description:
+              "auto = UF depois nacional; uf = só estadual; nacional = sem filtro de cidade/UF",
+          },
           final_limit: {
             type: "integer",
-            description: "Opcional — override do limite pedido; default = da última busca",
+            description: "Opcional — override do limite; default = da última busca",
+          },
+          mode: {
+            type: "string",
+            enum: ["auto", "fill", "replace"],
+            description:
+              "replace = só empresas novas (use quando a busca regional veio cheia mas irrelevante, ou usuário pediu nacional sem repetir). fill = completa cota mantendo anteriores. auto escolhe replace se já havia final_limit resultados.",
           },
         },
         additionalProperties: false,
@@ -182,10 +194,13 @@ Comportamento:
 7. Evite jargão interno (Query Manager, RRF, Fallback Vector) na conversa — fale em "busca mais geral / estadual / nacional".
 
 Fallback (busca mais geral) — regra obrigatória:
-- Se search_suppliers retornar result_count < requested_limit (campo suggest_broader_search=true), AO FINAL da resposta PERGUNTE se o usuário deseja uma busca mais geral para completar a quantidade pedida. NÃO chame expand_search_fallback nesse mesmo turno.
-- Se o usuário reclamar dos resultados (poucos, ruins, incompletos, "só isso?", "não atende", etc.), PERGUNTE se quer expandir para estadual/nacional — a menos que ele já tenha pedido explicitamente a expansão.
-- Só chame expand_search_fallback quando o usuário confirmar (sim, pode, quero, faça, etc.) OU pedir explicitamente busca mais ampla/estadual/nacional.
-- Depois do fallback, diga se completou o limite e quais etapas usou (estadual/nacional) em linguagem simples.
+- Se search_suppliers retornar result_count < requested_limit (suggest_broader_search=true), AO FINAL PERGUNTE se deseja busca mais geral. NÃO chame expand_search_fallback nesse mesmo turno.
+- Se os resultados vierem cheios mas IRRELEVANTES ao produto pedido, também PERGUNTE se quer expandir (estadual/nacional).
+- Se o usuário reclamar OU confirmar expansão OU pedir "busca nacional/estadual/mais geral": chame expand_search_fallback (NUNCA search_suppliers de novo com a mesma cidade).
+  - Pediu nacional → scope="nacional", mode="replace"
+  - Pediu estadual/UF → scope="uf", mode="replace"
+  - Só disse "sim" à pergunta → scope="auto", mode="auto"
+- Depois, diga claramente o escopo usado (estadual/nacional), quantas empresas NOVAS entrou e se removeu o filtro de cidade.
 
 Config: dims [${dims}]; BM25 ${config?.bm25?.vector_name ? "on" : "off"}.`;
 }
@@ -248,16 +263,24 @@ function summarizeFallbackForLlm(cascade, plan) {
     fallback: true,
     expanded: cascade.expanded,
     filled: cascade.filled,
+    mode: cascade.mode,
+    scope: cascade.scope,
     reason: cascade.reason || null,
+    hint: cascade.hint || null,
     requested_limit: cascade.requested_limit,
     result_count_before: cascade.result_count_before,
     result_count: cascade.result_count,
+    new_count: cascade.new_count,
     shortfall: cascade.shortfall,
+    last_filter: cascade.last_filter,
+    geo_relaxed: true,
     stages: (cascade.stages || []).map((s) => ({
       name: s.name,
       ok: s.ok,
       added: s.added ?? 0,
       fetched: s.fetched ?? 0,
+      filter: s.filter ?? null,
+      filter_removed_geo: s.filter_removed_geo === true,
       error: s.error || null,
     })),
     intent: plan?.intent ?? null,
@@ -476,6 +499,13 @@ async function executeTool(name, args, ctx) {
         ? Number(args.final_limit)
         : Number(baseArgs.final_limit) || defaults.final_limit;
 
+    const scopeRaw = typeof args.scope === "string" ? args.scope.trim().toLowerCase() : "auto";
+    const scope =
+      scopeRaw === "uf" || scopeRaw === "nacional" || scopeRaw === "auto" ? scopeRaw : "auto";
+    const modeRaw = typeof args.mode === "string" ? args.mode.trim().toLowerCase() : "auto";
+    const mode =
+      modeRaw === "fill" || modeRaw === "replace" || modeRaw === "auto" ? modeRaw : "auto";
+
     try {
       const existingResults = Array.isArray(prevSearch.results) ? prevSearch.results : [];
       const cascade = await runFallbackCascade({
@@ -483,6 +513,8 @@ async function executeTool(name, args, ctx) {
         plan,
         existingResults,
         finalLimit: final_limit,
+        scope,
+        mode,
         executeSearchByText,
       });
 
@@ -494,8 +526,12 @@ async function executeTool(name, args, ctx) {
         fallback_meta: {
           stages: cascade.stages,
           result_count_before: cascade.result_count_before,
+          new_count: cascade.new_count,
           filled: cascade.filled,
           expanded: cascade.expanded,
+          mode: cascade.mode,
+          scope: cascade.scope,
+          last_filter: cascade.last_filter,
         },
         search_id: prevSearch?.search_id || null,
       };
@@ -503,6 +539,11 @@ async function executeTool(name, args, ctx) {
       const full = {
         ...plan,
         intent: plan?.intent ?? null,
+        // geo da busca ampliada: sem cidade
+        geo:
+          cascade.last_filter?.uf
+            ? { uf: cascade.last_filter.uf, city_name: null, scope: cascade.scope }
+            : { city_name: null, uf: null, scope: cascade.scope || "nacional" },
         search_duration_ms: (cascade.stages || []).reduce(
           (a, s) => a + (s.duration_ms || 0),
           0,
@@ -513,11 +554,17 @@ async function executeTool(name, args, ctx) {
           name: "search_text",
           arguments: {
             ...baseArgs,
+            filter: cascade.last_filter || undefined,
             final_limit,
             fallback: true,
+            scope: cascade.scope,
+            mode: cascade.mode,
           },
         },
       };
+      if (!full.mcp_tool_call.arguments.filter) {
+        delete full.mcp_tool_call.arguments.filter;
+      }
       onSearch?.(full);
       return summarizeFallbackForLlm(cascade, plan);
     } catch (e) {

@@ -17,7 +17,19 @@ Objetivo: quando a busca regional devolve **menos resultados** que o `final_limi
 | `uf` | remove cidade; mantém `uf` + filtros de negócio |
 | `nacional` | remove cidade e UF; mantém `modelo_negocio` etc. |
 
-CNPJs já retornados entram em `filter_not.cnpj`. Resultados são mesclados sem duplicata até `final_limit`.
+CNPJs já retornados entram em `filter_not.cnpj`.
+
+### Modos
+
+| mode | Quando | Comportamento |
+|------|--------|----------------|
+| `fill` | Busca veio curta (`result_count < final_limit`) | Mantém anteriores e completa com novos |
+| `replace` | Cota já cheia mas irrelevante, ou usuário pediu nacional sem repetir | Devolve **só** empresas novas do escopo ampliado |
+| `auto` | Default da tool | `replace` se já havia `final_limit` resultados; senão `fill` |
+
+`scope`: `auto` | `uf` | `nacional` — se o usuário pedir "busca nacional", a tool deve usar `scope=nacional` e `mode=replace`.
+
+**Bug corrigido (2026-08-06):** se a busca regional já enchia o `final_limit`, a cascata saía cedo e **não** removia o filtro de cidade — parecia “mesmos resultados de Varginha”. Agora sempre executa os estágios amplos e, em `replace`, prioriza empresas novas.
 
 ## Código
 

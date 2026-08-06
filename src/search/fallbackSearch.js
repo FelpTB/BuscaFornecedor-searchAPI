@@ -1,6 +1,7 @@
 /**
- * Fallback Vector — amplia busca regional insuficiente (cidade → UF → nacional).
- * Exclui CNPJs já listados. Objetivo: aproximar len(resultados) do final_limit pedido.
+ * Fallback Vector — amplia busca regional (cidade → UF → nacional).
+ * Exclui CNPJs já listados. Em modo replace (padrão quando a cota já está cheia),
+ * prioriza empresas NOVAS do escopo ampliado — não reutiliza o lote regional ruim.
  */
 
 /**
@@ -98,8 +99,24 @@ export function buildFallbackStages(baseArgs, plan, existingResults = []) {
     return stages;
   }
 
-  // Já nacional / sem geo — nada a expandir
   return [];
+}
+
+/**
+ * @param {{ name: string, filter: object }[]} stages
+ * @param {'auto'|'uf'|'nacional'} scope
+ */
+export function selectStagesByScope(stages, scope = "auto") {
+  const s = String(scope || "auto").toLowerCase();
+  if (s === "nacional" || s === "national") {
+    const nat = stages.filter((x) => x.name === "nacional");
+    return nat.length ? nat : stages.slice(-1);
+  }
+  if (s === "uf" || s === "estadual" || s === "state") {
+    const ufOnly = stages.filter((x) => x.name === "uf");
+    return ufOnly.length ? ufOnly : stages;
+  }
+  return stages;
 }
 
 /**
@@ -130,14 +147,55 @@ export function mergeUniqueResults(existing, incoming, finalLimit, excluded) {
   };
 }
 
+function renumber(results, limit) {
+  return (results || []).slice(0, limit).map((r, i) => ({ ...r, posicao: i + 1 }));
+}
+
+/**
+ * Monta args de search_text para um estágio — remove geo anterior de propósito.
+ * @param {object} baseArgs
+ * @param {object} stageFilter
+ * @param {string[]} excludedCnpjs
+ * @param {number} fetchLimit
+ */
+export function buildStageSearchArgs(baseArgs, stageFilter, excludedCnpjs, fetchLimit) {
+  const prevFilterNot =
+    baseArgs.filter_not && typeof baseArgs.filter_not === "object"
+      ? { ...baseArgs.filter_not }
+      : {};
+
+  const args = {
+    ...baseArgs,
+    final_limit: fetchLimit,
+    filter_not: {
+      ...prevFilterNot,
+      cnpj: excludedCnpjs,
+    },
+  };
+
+  // Sempre sobrescrever filter: estágio vazio = busca sem geo
+  if (stageFilter && Object.keys(stageFilter).length > 0) {
+    args.filter = stageFilter;
+  } else {
+    delete args.filter;
+  }
+
+  return args;
+}
+
 /**
  * Executa cascata Fallback Vector reutilizando args da última busca.
  *
  * @param {object} opts
- * @param {object} opts.baseArgs — arguments de search_text da busca original
- * @param {object|null} [opts.plan] — plano QM / geo da sessão
+ * @param {object} opts.baseArgs
+ * @param {object|null} [opts.plan]
  * @param {object[]} opts.existingResults
  * @param {number} opts.finalLimit
+ * @param {'auto'|'uf'|'nacional'} [opts.scope]
+ * @param {'fill'|'replace'|'auto'} [opts.mode]
+ *   - fill: completa cota mantendo resultados anteriores
+ *   - replace: devolve só empresas NOVAS do escopo ampliado (não repete o lote regional)
+ *   - auto: fill se result_count < limit; replace se a cota já estava cheia
  * @param {(args: object, opts?: object) => Promise<object>} opts.executeSearchByText
  */
 export async function runFallbackCascade({
@@ -145,6 +203,8 @@ export async function runFallbackCascade({
   plan = null,
   existingResults = [],
   finalLimit = 10,
+  scope = "auto",
+  mode = "auto",
   executeSearchByText,
 }) {
   if (!baseArgs || typeof baseArgs !== "object") {
@@ -163,10 +223,16 @@ export async function runFallbackCascade({
       ? Number(finalLimit)
       : 10;
 
-  const excluded = new Set(extractCnpjs(existingResults));
-  let merged = Array.isArray(existingResults) ? [...existingResults] : [];
-  const stageReports = [];
-  const stages = buildFallbackStages(baseArgs, plan, merged);
+  const existing = Array.isArray(existingResults) ? [...existingResults] : [];
+  const resolvedMode =
+    mode === "fill" || mode === "replace"
+      ? mode
+      : existing.length >= limit
+        ? "replace"
+        : "fill";
+
+  const allStages = buildFallbackStages(baseArgs, plan, existing);
+  const stages = selectStagesByScope(allStages, scope);
 
   if (stages.length === 0) {
     return {
@@ -174,37 +240,32 @@ export async function runFallbackCascade({
       fallback: true,
       expanded: false,
       reason: "busca_ja_nacional_ou_sem_geo",
+      mode: resolvedMode,
+      scope,
       requested_limit: limit,
-      result_count_before: merged.length,
-      result_count: Math.min(merged.length, limit),
-      shortfall: Math.max(0, limit - merged.length),
+      result_count_before: existing.length,
+      result_count: Math.min(existing.length, limit),
+      new_count: 0,
+      shortfall: Math.max(0, limit - existing.length),
       stages: [],
-      results: merged.slice(0, limit).map((r, i) => ({ ...r, posicao: i + 1 })),
-      filled: merged.length >= limit,
+      results: renumber(existing, limit),
+      filled: existing.length >= limit,
+      last_filter: baseArgs.filter ?? null,
     };
   }
 
-  const prevFilterNot =
-    baseArgs.filter_not && typeof baseArgs.filter_not === "object"
-      ? { ...baseArgs.filter_not }
-      : {};
+  const excluded = new Set(extractCnpjs(existing));
+  const newHits = [];
+  const stageReports = [];
 
+  // Sempre tenta buscar empresas NOVAS nos estágios amplos —
+  // mesmo se o lote regional já encheu o final_limit (caso típico de relevância ruim).
   for (const stage of stages) {
-    if (merged.length >= limit) break;
-    const need = limit - merged.length;
-    const fetchLimit = Math.min(Math.max(need * 2, need), 100);
+    if (newHits.length >= limit) break;
 
-    const args = {
-      ...baseArgs,
-      filter: Object.keys(stage.filter).length ? stage.filter : undefined,
-      filter_not: {
-        ...prevFilterNot,
-        cnpj: [...excluded],
-      },
-      final_limit: fetchLimit,
-      // mantém queries/weights/bm25 da busca original
-    };
-    if (!args.filter) delete args.filter;
+    const need = limit - newHits.length;
+    const fetchLimit = Math.min(Math.max(need * 3, need), 100);
+    const args = buildStageSearchArgs(baseArgs, stage.filter, [...excluded], fetchLimit);
 
     const started = Date.now();
     let search;
@@ -220,38 +281,75 @@ export async function runFallbackCascade({
         error: e.message || String(e),
         status: e.status,
         duration_ms: Date.now() - started,
+        filter: stage.filter,
+        filter_removed_geo: true,
       });
       continue;
     }
 
     const incoming = Array.isArray(search?.results) ? search.results : [];
-    const { results: next, added } = mergeUniqueResults(merged, incoming, limit, excluded);
-    merged = next;
+    let added = 0;
+    for (const r of incoming) {
+      if (newHits.length >= limit) break;
+      const cnpj = r?.payload?.cnpj ?? r?.cnpj;
+      const key = typeof cnpj === "string" ? cnpj.trim() : "";
+      if (key && excluded.has(key)) continue;
+      if (key) excluded.add(key);
+      newHits.push(r);
+      added += 1;
+    }
 
     stageReports.push({
       name: stage.name,
       ok: true,
       fetched: incoming.length,
       added,
-      result_count_after: merged.length,
+      new_count_after: newHits.length,
       search_id: search?.search_id ?? null,
       duration_ms: Date.now() - started,
-      filter: stage.filter,
+      filter: Object.keys(stage.filter || {}).length ? stage.filter : null,
+      filter_removed_geo: true,
     });
   }
 
-  const renumbered = merged.map((r, i) => ({ ...r, posicao: i + 1 }));
+  let finalResults;
+  if (resolvedMode === "replace") {
+    finalResults = renumber(newHits, limit);
+  } else {
+    // fill: anteriores + novos até o limite
+    const { results } = mergeUniqueResults(
+      existing,
+      newHits,
+      limit,
+      new Set(extractCnpjs(existing)),
+    );
+    finalResults = results;
+  }
+
+  const lastOk = [...stageReports].reverse().find((s) => s.ok);
+  const lastFilter =
+    lastOk && Object.prototype.hasOwnProperty.call(lastOk, "filter")
+      ? lastOk.filter
+      : null;
 
   return {
     ok: true,
     fallback: true,
     expanded: stageReports.some((s) => s.ok && s.added > 0),
+    mode: resolvedMode,
+    scope,
     requested_limit: limit,
-    result_count_before: existingResults.length,
-    result_count: renumbered.length,
-    shortfall: Math.max(0, limit - renumbered.length),
+    result_count_before: existing.length,
+    result_count: finalResults.length,
+    new_count: newHits.length,
+    shortfall: Math.max(0, limit - finalResults.length),
     stages: stageReports,
-    results: renumbered,
-    filled: renumbered.length >= limit,
+    results: finalResults,
+    filled: finalResults.length >= limit,
+    last_filter: lastFilter,
+    hint:
+      newHits.length === 0
+        ? "Nenhuma empresa nova no escopo ampliado (filtros geo removidos; CNPJs anteriores excluídos)."
+        : null,
   };
 }
