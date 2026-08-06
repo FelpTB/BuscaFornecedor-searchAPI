@@ -331,4 +331,35 @@ process.env.QDRANT_DIMENSION_KEYS =
   console.log("OK fallback cascade");
 }
 
+{
+  const { mapResultsForDisplay, cnpjBasicoFromPayload, profileUrlFromPayload, localFromPayload } =
+    await import("../src/search/resultDisplay.js");
+  assert.equal(cnpjBasicoFromPayload({ cnpj: "97.030.720" }), "97030720");
+  assert.equal(cnpjBasicoFromPayload({ cnpj: "12345678000199" }), "12345678");
+  assert.equal(
+    profileUrlFromPayload({ cnpj_basico: "07160279" }),
+    "https://buscafornecedor.com.br/perfil/07160279",
+  );
+  assert.equal(localFromPayload({ uf: "rs", cidade: "Novo Hamburgo" }), "RS · Novo Hamburgo");
+  const mapped = mapResultsForDisplay([
+    {
+      posicao: 1,
+      payload: {
+        nome_empresa: "ACME",
+        uf: "SP",
+        cidade: "Campinas",
+        modelo_negocio: "Distribuidor",
+        descricao: "Teste",
+        site: "www.acme.com.br",
+        cnpj: "12345678000199",
+      },
+    },
+  ]);
+  assert.equal(mapped[0].local, "SP · Campinas");
+  assert.equal(mapped[0].site, "https://www.acme.com.br");
+  assert.equal(mapped[0].perfil_url, "https://buscafornecedor.com.br/perfil/12345678");
+  assert.equal(mapped[0].cnpj_basico, "12345678");
+  console.log("OK result display mapping");
+}
+
 console.log("\nAll unit checks passed.");

@@ -524,17 +524,31 @@ export function getSearchXrayHtml() {
         const scores = Object.entries(r.scores || {})
           .map(([k, v]) => "<span>" + esc(k) + ": " + Number(v).toFixed(4) + "</span>").join("");
         const p = r.payload || {};
+        const uf = (p.uf || "").toString().trim().toUpperCase();
+        const cidade = (p.cidade || p.municipio || "").toString().trim();
+        const local = uf && cidade ? (uf + " · " + cidade) : (uf || cidade || "—");
+        const siteRaw = (p.site || p.website || "").toString().trim();
+        const site = siteRaw
+          ? (/^https?:\\/\\//i.test(siteRaw) ? siteRaw : ("https://" + siteRaw.replace(/^\\/+/, "")))
+          : "";
+        const cnpjDigits = String(p.cnpj_basico || p.cnpj || "").replace(/\\D/g, "");
+        const basico = cnpjDigits.length >= 14 ? cnpjDigits.slice(0, 8)
+          : (cnpjDigits.length >= 8 ? cnpjDigits.slice(0, 8) : cnpjDigits);
+        const perfil = basico ? ("https://buscafornecedor.com.br/perfil/" + basico) : "";
+        const desc = (p.descricao || "").toString();
         return (
           '<article class="result"><div class="top">' +
             '<h3>' + esc(r.posicao) + ". " + esc(p.nome_empresa || r.id) + '</h3>' +
             '<div class="score">final ' + Number(r.score_final ?? 0).toFixed(4) + '</div></div>' +
             '<div class="scores">' + scores + '</div>' +
             '<div class="payload">' +
-              '<div><b>CNPJ</b> ' + esc(p.cnpj || "—") + ' · <b>UF</b> ' + esc(p.uf || "—") +
-              ' · <b>Cidade</b> ' + esc(p.cidade || "—") + '</div>' +
-              '<div><b>Modelo</b> ' + esc(p.modelo_negocio || "—") + '</div>' +
-              '<div><b>Descrição</b> ' + esc((p.descricao || "").slice(0, 220)) +
-              ((p.descricao || "").length > 220 ? "…" : "") + '</div></div></article>'
+              '<div><b>Local</b> ' + esc(local) + '</div>' +
+              '<div><b>Modelo de Negócio</b> ' + esc(p.modelo_negocio || "—") + '</div>' +
+              '<div><b>Descrição</b> ' + esc(desc.slice(0, 280)) +
+              (desc.length > 280 ? "…" : "") + '</div>' +
+              (site ? ('<div><b>Site</b> <a href="' + esc(site) + '" target="_blank" rel="noopener">' + esc(site) + '</a></div>') : '') +
+              (perfil ? ('<div><b>Perfil</b> <a href="' + esc(perfil) + '" target="_blank" rel="noopener">' + esc(perfil) + '</a></div>') : '') +
+            '</div></article>'
         );
       }).join("");
     }

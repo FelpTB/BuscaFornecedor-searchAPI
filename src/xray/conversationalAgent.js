@@ -8,6 +8,10 @@ import { fetchCitiesNearby } from "../clients/citiesApi.js";
 import { planSearchToolCall } from "./searchAgent.js";
 import { runFallbackCascade } from "../search/fallbackSearch.js";
 import {
+  mapResultsForDisplay,
+  RESULT_DISPLAY_PROMPT,
+} from "../search/resultDisplay.js";
+import {
   getOrCreateSession,
   resetSession,
   setSessionMessages,
@@ -202,23 +206,9 @@ Fallback (busca mais geral) — regra obrigatória:
   - Só disse "sim" à pergunta → scope="auto", mode="auto"
 - Depois, diga claramente o escopo usado (estadual/nacional), quantas empresas NOVAS entrou e se removeu o filtro de cidade.
 
-Config: dims [${dims}]; BM25 ${config?.bm25?.vector_name ? "on" : "off"}.`;
-}
+${RESULT_DISPLAY_PROMPT}
 
-function mapResultTop(results, limit = 12) {
-  return (results || []).slice(0, limit).map((r) => {
-    const p = r.payload || {};
-    return {
-      posicao: r.posicao,
-      nome_empresa: p.nome_empresa || null,
-      cnpj: p.cnpj || null,
-      cidade: p.cidade || null,
-      uf: p.uf || null,
-      modelo_negocio: p.modelo_negocio || null,
-      score_final: r.score_final ?? null,
-      descricao: typeof p.descricao === "string" ? p.descricao.slice(0, 160) : null,
-    };
-  });
+Config: dims [${dims}]; BM25 ${config?.bm25?.vector_name ? "on" : "off"}.`;
 }
 
 /** Resume resultados para o LLM (não o payload inteiro). */
@@ -249,7 +239,9 @@ function summarizeSearchForLlm(plan, search) {
           sample: plan.geo.city_names_sample || null,
         }
       : null,
-    top: mapResultTop(results),
+    top: mapResultsForDisplay(results),
+    display_format:
+      "nome_empresa · local(UF · Cidade) · modelo_negocio · descricao · site? · perfil_url",
     hint:
       shortfall > 0
         ? "Faltaram resultados vs o pedido. PERGUNTE se o usuário quer busca mais geral; só chame expand_search_fallback após confirmação."
@@ -284,7 +276,9 @@ function summarizeFallbackForLlm(cascade, plan) {
       error: s.error || null,
     })),
     intent: plan?.intent ?? null,
-    top: mapResultTop(cascade.results),
+    top: mapResultsForDisplay(cascade.results),
+    display_format:
+      "nome_empresa · local(UF · Cidade) · modelo_negocio · descricao · site? · perfil_url",
   };
 }
 
