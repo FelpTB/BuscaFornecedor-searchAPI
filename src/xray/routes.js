@@ -13,6 +13,18 @@ import {
   getProfile,
 } from "../auth/registerBuyer.js";
 import { maybeEnqueueFromSearch } from "../telemetry/enqueue.js";
+import {
+  getCommsQueueDepth,
+  getCommsLogs,
+  getCommsSummary,
+  getCommsStatusSnapshot,
+} from "../comms/enqueueRecebeConsulta.js";
+import { buildRecebeConsultaBodies } from "../comms/buildRecebeConsultaPayload.js";
+import {
+  getNotificacaoMode,
+  isNotificacaoConfigured,
+  getNotificacaoApiBase,
+} from "../clients/notificacaoClient.js";
 import { getConsultaById, getAparicoesAgg } from "../db/repositories/consultasRepo.js";
 import { isSupabaseConfigured } from "../db/supabaseAdmin.js";
 import { probeApiKeysTable } from "../db/repositories/compradorRepo.js";
@@ -152,6 +164,112 @@ export function createXrayRouter() {
     }
   });
 
+
+  router.get("/search/xray/comms/status", async (_req, res, next) => {
+    try {
+      const snap = getCommsStatusSnapshot();
+      return res.json({
+        mode: getNotificacaoMode(),
+        configured: isNotificacaoConfigured(),
+        base_url: getNotificacaoApiBase(),
+        endpoint: "/v1/interno/orquestracao/recebe-consulta",
+        queue_depth: getCommsQueueDepth(),
+        ...snap,
+        flow: [
+          "1. Busca autenticada",
+          "2. Persist consulta (telemetria)",
+          "3. POST recebe-consulta por fornecedor com cnpj_basico",
+          "4. n8n claim/envia email depois (fora desta API)",
+        ],
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.get("/search/xray/comms/logs", async (req, res, next) => {
+    try {
+      const search_id = typeof req.query.search_id === "string" ? req.query.search_id.trim() : "";
+      const limit = req.query.limit != null ? Number(req.query.limit) : 120;
+      const logs = getCommsLogs({ search_id: search_id || undefined, limit });
+      const summary = search_id ? getCommsSummary(search_id) : null;
+      return res.json({
+        search_id: search_id || null,
+        count: logs.length,
+        summary,
+        logs,
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.get("/search/xray/comms/summary/:searchId", async (req, res, next) => {
+    try {
+      return res.json(getCommsSummary(req.params.searchId));
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  /** Preview dos bodies que seriam enviados (dry-run, sem POST). */
+  router.post("/search/xray/comms/preview", async (req, res, next) => {
+    try {
+      const auth = await resolveAuthContext(req.headers);
+      if (!auth.userId) throw AppError.unauthorized();
+
+      const searchId =
+        (typeof req.body?.search_id === "string" && req.body.search_id.trim()) ||
+        (typeof req.body?.id_consulta === "string" && req.body.id_consulta.trim()) ||
+        "";
+      if (!searchId) throw AppError.badRequest("search_id e obrigatorio");
+
+      const row = await getConsultaById(searchId);
+      if (!row) return res.status(404).json({ error: "Consulta nao encontrada (ainda async?)" });
+      if (row.comprador !== auth.userId) throw AppError.forbidden();
+
+      const resultados = Array.isArray(row.resultados) ? row.resultados : [];
+      const params =
+        row.parametros && typeof row.parametros === "object"
+          ? {
+              ...row.parametros,
+              query: row.parametros.query || row.v_produto || null,
+              filter: {
+                ...(row.parametros.filter || {}),
+                uf: row.parametros.filter?.uf ?? row.uf,
+                cidade: row.parametros.filter?.cidade ?? row.municipio,
+              },
+            }
+          : { query: row.v_produto, filter: { uf: row.uf, cidade: row.municipio } };
+
+      const bodies = buildRecebeConsultaBodies({
+        search_id: searchId,
+        enrichedResults: resultados,
+        rawResults: resultados,
+        params,
+      });
+
+      const live = getCommsSummary(searchId);
+
+      return res.json({
+        dry_run: true,
+        search_id: searchId,
+        consulta_status: row.status,
+        resultados: resultados.length,
+        would_queue: bodies.length,
+        skipped_without_cnpj: Math.max(0, resultados.length - bodies.length),
+        bodies,
+        live_comms: live,
+        notificacao: {
+          mode: getNotificacaoMode(),
+          configured: isNotificacaoConfigured(),
+          base_url: getNotificacaoApiBase(),
+        },
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
   router.get("/search/xray/telemetry/aparicoes/:cnpj", async (req, res, next) => {
     try {
       await resolveAuthContext(req.headers);

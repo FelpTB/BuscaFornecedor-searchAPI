@@ -210,6 +210,7 @@ export function getSearchXrayHtml() {
       <button type="button" data-mode="account">2 · Conta / Auth</button>
       <button type="button" data-mode="manual">3 · Tool call manual</button>
       <button type="button" data-mode="probe">4 · Probes</button>
+      <button type="button" data-mode="comms">5 · Fila email</button>
     </div>
 
     <div id="mode-chat" class="panel-mode active">
@@ -268,6 +269,7 @@ export function getSearchXrayHtml() {
                 <button type="button" data-tab="geo">geo</button>
                 <button type="button" data-tab="weights">weights</button>
                 <button type="button" data-tab="meta">meta</button>
+                <button type="button" data-tab="comms">comms</button>
                 <button type="button" data-tab="raw">raw</button>
               </div>
               <pre class="xray" id="xray">Sem busca nesta sessão ainda.</pre>
@@ -345,8 +347,23 @@ export function getSearchXrayHtml() {
           <button type="button" class="ghost" data-probe="tools">Contrato tools MCP</button>
           <button type="button" class="ghost" data-probe="cities">GET cities nearby</button>
           <button type="button" class="ghost" data-probe="chatTools">Tools do chat</button>
+          <button type="button" class="ghost" data-probe="commsStatus">GET comms status</button>
         </div>
         <pre class="xray" id="probeOut" style="max-height:none">Clique em um probe…</pre>
+      </div>
+    </div>
+    <div id="mode-comms" class="panel-mode">
+      <div class="card" style="flex:1;overflow:auto">
+        <h2>Fila de e-mail / SMS (recebe-consulta)</h2>
+        <p class="hint">Apos busca autenticada: telemetria grava a consulta, depois esta API chama <code>POST /v1/interno/orquestracao/recebe-consulta</code> por fornecedor. O n8n agenda o envio depois.</p>
+        <div class="opts" style="margin-top:0.75rem;align-items:end">
+          <label>search_id <input type="text" id="commsSearchId" placeholder="uuid da ultima busca" style="width:280px"></label>
+          <button type="button" class="primary" id="btnCommsPoll">Ver logs / poll</button>
+          <button type="button" class="ghost" id="btnCommsPreview">Preview payloads (dry-run)</button>
+          <button type="button" class="ghost" id="btnCommsStatus">Status da fila</button>
+        </div>
+        <div id="commsBadges" class="chips" style="margin-top:0.75rem"></div>
+        <pre class="xray" id="commsOut" style="margin-top:0.75rem;max-height:none">Rode uma busca autenticada e cole o search_id.</pre>
       </div>
     </div>
   </div>
@@ -490,6 +507,7 @@ export function getSearchXrayHtml() {
           actions: d.actions,
           search_id: d.search?.search_id,
         },
+        comms: d.comms || { note: "Use aba 5 Fila email" },
         raw: d,
       };
       $("xray").textContent = JSON.stringify(map[state.tab] ?? map.tool, null, 2);
@@ -527,6 +545,12 @@ export function getSearchXrayHtml() {
       renderChips(data.mcp_tool_call?.arguments);
       renderXray();
       if (data.search) renderResults(data.search);
+      const sid = data.search?.search_id || data.search_id;
+      if (sid) {
+        if ($("probeSearchId")) $("probeSearchId").value = sid;
+        if ($("commsSearchId")) $("commsSearchId").value = sid;
+        pollComms(sid, { auto: true });
+      }
       $("statusMeta").innerHTML =
         (data.intent ? '<span class="badge warn">intent ' + esc(data.intent) + '</span>' : '') +
         (data.geo?.cities_in_filter != null
@@ -711,6 +735,11 @@ export function getSearchXrayHtml() {
           }, null, 2);
           return;
         }
+        if (kind === "commsStatus") {
+          const res = await fetch("/search/xray/comms/status", { headers: authHeaders() });
+          $("probeOut").textContent = JSON.stringify(await res.json(), null, 2);
+          return;
+        }
         if (kind === "chatTools") {
           $("probeOut").textContent = JSON.stringify({
             endpoint: "POST /search/xray/chat",
@@ -887,6 +916,96 @@ export function getSearchXrayHtml() {
       }
       $("accountOut").textContent = JSON.stringify(data, null, 2);
     });
+    
+    function renderCommsBadges(summary, status) {
+      const parts = [];
+      if (status) {
+        parts.push('<span class="badge ' + (status.configured ? "ok" : "err") + '">notif ' +
+          (status.configured ? "key ok" : "sem NOTIFICACAO_API_KEY") + '</span>');
+        parts.push('<span class="badge">mode ' + esc(status.mode) + '</span>');
+        if (status.queue_depth != null) parts.push('<span class="badge">queue ' + esc(status.queue_depth) + '</span>');
+      }
+      if (summary) {
+        const fin = summary.finished === true ? "ok" : (summary.finished === false ? "warn" : "");
+        parts.push('<span class="badge ' + fin + '">expected ' + esc(summary.expected ?? "-") + '</span>');
+        parts.push('<span class="badge ok">ok ' + esc(summary.ok) + '</span>');
+        parts.push('<span class="badge ' + (summary.error ? "err" : "") + '">err ' + esc(summary.error) + '</span>');
+        parts.push('<span class="badge">already ' + esc(summary.already) + '</span>');
+        if (summary.finished === true) parts.push('<span class="badge ok">fluxo concluido</span>');
+        if (summary.finished === false) parts.push('<span class="badge warn">aguardando</span>');
+      }
+      if ($("commsBadges")) $("commsBadges").innerHTML = parts.join("");
+    }
+
+    async function fetchCommsStatus() {
+      const res = await fetch("/search/xray/comms/status", { headers: authHeaders() });
+      return res.json();
+    }
+
+    async function fetchCommsLogs(searchId) {
+      const q = searchId ? ("?search_id=" + encodeURIComponent(searchId)) : "";
+      const res = await fetch("/search/xray/comms/logs" + q, { headers: authHeaders() });
+      return res.json();
+    }
+
+    let commsPollTimer = null;
+    async function pollComms(searchId, opts) {
+      opts = opts || {};
+      const auto = opts.auto === true;
+      const rounds = opts.rounds != null ? opts.rounds : 8;
+      const id = (searchId || ($("commsSearchId") && $("commsSearchId").value.trim()) || "").trim();
+      if (!id) {
+        if ($("commsOut")) $("commsOut").textContent = "Informe search_id";
+        return;
+      }
+      if ($("commsSearchId")) $("commsSearchId").value = id;
+      if (commsPollTimer) { clearInterval(commsPollTimer); commsPollTimer = null; }
+      let left = rounds;
+      const tick = async function() {
+        try {
+          const pair = await Promise.all([fetchCommsStatus(), fetchCommsLogs(id)]);
+          const status = pair[0];
+          const logsPayload = pair[1];
+          const summary = logsPayload.summary || null;
+          renderCommsBadges(summary, status);
+          if ($("commsOut")) {
+            $("commsOut").textContent = JSON.stringify({
+              polled_at: new Date().toISOString(), auto: auto,
+              status: { mode: status.mode, configured: status.configured, base_url: status.base_url, queue_depth: status.queue_depth },
+              summary: summary, logs: logsPayload.logs
+            }, null, 2);
+          }
+          if (state.last) state.last.comms = { summary: summary, logs: logsPayload.logs };
+          if (state.tab === "comms") renderXray();
+          left -= 1;
+          if ((summary && summary.finished) || left <= 0) {
+            if (commsPollTimer) { clearInterval(commsPollTimer); commsPollTimer = null; }
+          }
+        } catch (e) {
+          if ($("commsOut")) $("commsOut").textContent = String(e);
+          if (commsPollTimer) { clearInterval(commsPollTimer); commsPollTimer = null; }
+        }
+      };
+      await tick();
+      if (left > 0) commsPollTimer = setInterval(tick, 1200);
+    }
+
+    async function previewComms() {
+      const id = ($("commsSearchId") && $("commsSearchId").value.trim()) || "";
+      if (!id) { $("commsOut").textContent = "Informe search_id"; return; }
+      $("commsOut").textContent = "Montando preview...";
+      const res = await fetch("/search/xray/comms/preview", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ search_id: id }),
+      });
+      const data = await res.json();
+      $("commsOut").textContent = JSON.stringify(data, null, 2);
+      if (data.live_comms) {
+        renderCommsBadges(data.live_comms, data.notificacao ? { configured: data.notificacao.configured, mode: data.notificacao.mode, queue_depth: null } : null);
+      }
+    }
+
     $("btnConsulta").addEventListener("click", async () => {
       const id = $("probeSearchId").value.trim();
       if (!id) { $("accountOut").textContent = "Informe search_id"; return; }
@@ -901,6 +1020,14 @@ export function getSearchXrayHtml() {
       const res = await fetch("/search/xray/telemetry/aparicoes/" + encodeURIComponent(cnpj), {
         headers: authHeaders(),
       });
+
+    if ($("btnCommsPoll")) $("btnCommsPoll").addEventListener("click", function() { pollComms(null, { auto: false, rounds: 10 }); });
+    if ($("btnCommsPreview")) $("btnCommsPreview").addEventListener("click", function() { previewComms(); });
+    if ($("btnCommsStatus")) $("btnCommsStatus").addEventListener("click", async function() {
+      const status = await fetchCommsStatus();
+      renderCommsBadges(null, status);
+      $("commsOut").textContent = JSON.stringify(status, null, 2);
+    });
       $("accountOut").textContent = JSON.stringify(await res.json(), null, 2);
     });
 

@@ -50,3 +50,13 @@ Sem `NOTIFICACAO_API_KEY`, a busca e a telemetria seguem normalmente; a fila de 
 - `src/comms/buildRecebeConsultaPayload.js` - montagem do corpo
 - `src/comms/enqueueRecebeConsulta.js` - fila fire-and-forget
 - Hook em `src/telemetry/enqueue.js` apos `persistSearchCompleted` ok
+
+## X-Ray
+
+Aba **5 · Fila email** em /search/xray:
+
+- **Status da fila** — GET /search/xray/comms/status
+- **Ver logs / poll** — GET /search/xray/comms/logs?search_id=
+- **Preview payloads** — POST /search/xray/comms/preview (dry-run)
+
+Apos busca autenticada, o search_id e preenchido e o painel faz poll automatico.

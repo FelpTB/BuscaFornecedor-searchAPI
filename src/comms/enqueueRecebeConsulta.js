@@ -1,18 +1,25 @@
 /**
- * Camada de comunicação — enfileira notificação por fornecedor após busca.
+ * Camada de comunicacao — enfileira notificacao por fornecedor apos busca.
  * Espelha o fluxo n8n: para cada resultado → POST recebe-consulta.
  *
- * Fire-and-forget: não bloqueia a resposta da busca.
- * Depende da consulta já persistida em busca_fornecedor.consultas.
+ * Fire-and-forget: nao bloqueia a resposta da busca.
+ * Depende da consulta ja persistida em busca_fornecedor.consultas.
  */
 
 import {
   getNotificacaoMode,
   isNotificacaoConfigured,
   postRecebeConsulta,
+  getNotificacaoApiBase,
 } from "../clients/notificacaoClient.js";
 import { logError, logSuccess, logWarn } from "../logger.js";
 import { buildRecebeConsultaBodies } from "./buildRecebeConsultaPayload.js";
+import {
+  recordCommsEvent,
+  getCommsLogs,
+  getCommsSummary,
+  getCommsStatusSnapshot,
+} from "./commsLog.js";
 
 const queue = [];
 let pumping = false;
@@ -20,7 +27,7 @@ const MAX_CONCURRENCY = Number(process.env.NOTIFICACAO_CONCURRENCY) || 3;
 let inflight = 0;
 
 /**
- * Enfileira POSTs recebe-consulta após persistência bem-sucedida.
+ * Enfileira POSTs recebe-consulta apos persistencia bem-sucedida.
  * @returns {{ queued: boolean, reason?: string, count?: number }}
  */
 export function enqueueRecebeConsultaAfterPersist({
@@ -30,12 +37,15 @@ export function enqueueRecebeConsultaAfterPersist({
   params = {},
 } = {}) {
   if (getNotificacaoMode() === "off") {
+    recordCommsEvent({ type: "not_queued", search_id, reason: "notificacao_off" });
     return { queued: false, reason: "notificacao_off" };
   }
   if (!isNotificacaoConfigured()) {
+    recordCommsEvent({ type: "not_queued", search_id, reason: "missing_api_key" });
     return { queued: false, reason: "missing_api_key" };
   }
   if (!search_id) {
+    recordCommsEvent({ type: "not_queued", reason: "missing_search_id" });
     return { queued: false, reason: "missing_search_id" };
   }
 
@@ -47,12 +57,28 @@ export function enqueueRecebeConsultaAfterPersist({
   });
 
   if (!bodies.length) {
+    recordCommsEvent({
+      type: "not_queued",
+      search_id,
+      reason: "no_valid_cnpj",
+      raw_count: Array.isArray(rawResults) ? rawResults.length : 0,
+      enriched_count: Array.isArray(enrichedResults) ? enrichedResults.length : 0,
+    });
     return { queued: false, reason: "no_valid_cnpj", count: 0 };
   }
 
   for (const body of bodies) {
     queue.push(body);
   }
+
+  recordCommsEvent({
+    type: "batch_queued",
+    search_id,
+    count: bodies.length,
+    cnpjs: bodies.map((b) => b.cnpj_basico),
+    endpoint: `${getNotificacaoApiBase()}/v1/interno/orquestracao/recebe-consulta`,
+  });
+
   pump();
   return { queued: true, count: bodies.length };
 }
@@ -70,6 +96,17 @@ async function runPump() {
     Promise.resolve()
       .then(() => postRecebeConsulta(body))
       .then((res) => {
+        recordCommsEvent({
+          type: "ok",
+          search_id: body.id_consulta,
+          id_consulta: body.id_consulta,
+          cnpj_basico: body.cnpj_basico,
+          acao: res?.data?.acao,
+          canal: res?.data?.canal,
+          motivo: res?.data?.motivo,
+          id_externo: res?.data?.id_externo,
+          tipo_template: res?.data?.tipo_template,
+        });
         logSuccess("comms", "recebe-consulta ok", {
           id_consulta: body.id_consulta,
           cnpj_basico: body.cnpj_basico,
@@ -79,14 +116,30 @@ async function runPump() {
         });
       })
       .catch((err) => {
-        // 409 = já notificado (trava Redis) — esperado em retry
         if (err?.status === 409) {
-          logWarn("comms", "recebe-consulta já notificado", {
+          recordCommsEvent({
+            type: "already",
+            search_id: body.id_consulta,
+            id_consulta: body.id_consulta,
+            cnpj_basico: body.cnpj_basico,
+            status: 409,
+            message: err.message,
+          });
+          logWarn("comms", "recebe-consulta ja notificado", {
             id_consulta: body.id_consulta,
             cnpj_basico: body.cnpj_basico,
           });
           return;
         }
+        recordCommsEvent({
+          type: "error",
+          search_id: body.id_consulta,
+          id_consulta: body.id_consulta,
+          cnpj_basico: body.cnpj_basico,
+          status: err?.status,
+          code: err?.code,
+          message: err?.message,
+        });
         logError("comms", "Falha recebe-consulta", err, {
           id_consulta: body.id_consulta,
           cnpj_basico: body.cnpj_basico,
@@ -106,7 +159,9 @@ async function runPump() {
   }
 }
 
-/** Exposto para testes / health. */
+/** Exposto para testes / health / X-Ray. */
 export function getCommsQueueDepth() {
   return queue.length + inflight;
 }
+
+export { getCommsLogs, getCommsSummary, getCommsStatusSnapshot };
