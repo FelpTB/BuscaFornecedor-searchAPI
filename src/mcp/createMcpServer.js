@@ -1,13 +1,18 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { searchTextInputShape } from "../schemas/searchText.js";
 import { createSearchId } from "../middleware/auth.js";
+import { maybeEnqueueFromSearch } from "../telemetry/enqueue.js";
 
 /**
  * MCP Server — tools espelham REST (mesmo searchService).
- * @param {{ executeSearchByText: Function, getPublicConfig: Function }} deps
+ * @param {{
+ *   executeSearchByText: Function,
+ *   getPublicConfig: Function,
+ *   getAuth?: () => object|null,
+ * }} deps
  */
 export function createMcpServer(deps) {
-  const { executeSearchByText, getPublicConfig } = deps;
+  const { executeSearchByText, getPublicConfig, getAuth } = deps;
 
   const server = new McpServer({
     name: "busca-fornecedor",
@@ -57,6 +62,15 @@ export function createMcpServer(deps) {
           rerank: args?.rerank === true,
           searchId,
         });
+
+        const auth = typeof getAuth === "function" ? getAuth() : null;
+        maybeEnqueueFromSearch({
+          auth,
+          searchPayload: result,
+          requestParams: args || {},
+          source: "mcp",
+        });
+
         return {
           content: [
             {

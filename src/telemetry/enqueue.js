@@ -3,7 +3,8 @@
  */
 
 import { persistSearchCompleted, summarizeResultsForStorage } from "../db/repositories/consultasRepo.js";
-import { logError, logSuccess } from "../logger.js";
+import { enqueueRecebeConsultaAfterPersist } from "../comms/enqueueRecebeConsulta.js";
+import { logError, logSuccess, logWarn } from "../logger.js";
 
 const queue = [];
 let pumping = false;
@@ -84,6 +85,26 @@ async function runPump() {
           user_id: event.user_id,
           result,
         });
+        // Comunicação: só após consulta existir no banco (API de notificação exige id_consulta).
+        if (result?.ok) {
+          const queued = enqueueRecebeConsultaAfterPersist({
+            search_id: event.search_id,
+            enrichedResults: result.results || [],
+            rawResults: event.results || [],
+            params: event.params || {},
+          });
+          if (queued.queued) {
+            logSuccess("comms", "recebe-consulta enfileirado", {
+              search_id: event.search_id,
+              count: queued.count,
+            });
+          } else if (queued.reason && queued.reason !== "notificacao_off") {
+            logWarn("comms", "recebe-consulta não enfileirado", {
+              search_id: event.search_id,
+              reason: queued.reason,
+            });
+          }
+        }
       })
       .catch((err) => {
         logError("telemetry", "Falha ao persistir search.completed", err, {

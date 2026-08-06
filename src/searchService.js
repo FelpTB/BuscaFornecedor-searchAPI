@@ -18,6 +18,7 @@ import {
 import { isSupabaseConfigured } from "./db/supabaseAdmin.js";
 import { isPgPoolConfigured } from "./db/pgPool.js";
 import { getTelemetryMode } from "./telemetry/enqueue.js";
+import { getNotificacaoMode, isNotificacaoConfigured, getNotificacaoApiBase } from "./clients/notificacaoClient.js";
 
 const COLLECTION_NAME = process.env.COLLECTION_NAME;
 const ENDPOINT_SEARCH_TEXT = "POST /search/text";
@@ -737,6 +738,12 @@ function getPublicConfig() {
       configured: isSupabaseConfigured(),
       pg_pool: isPgPoolConfigured(),
       telemetry_mode: getTelemetryMode(),
+    },
+    notificacao: {
+      mode: getNotificacaoMode(),
+      configured: isNotificacaoConfigured(),
+      base_url: getNotificacaoApiBase(),
+      endpoint: "/v1/interno/orquestracao/recebe-consulta",
     },
     mcp: {
       endpoint: "/mcp",

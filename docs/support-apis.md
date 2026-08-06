@@ -10,6 +10,7 @@ Clones locais de análise (não versionados): `_vendor_apis/` (gitignored).
 | 2 | **Qdrant Request API** | [railway](https://qdrantrequestapi-buscafornecedor.up.railway.app/) | [FelpTB/Qdrant_Request_API](https://github.com/FelpTB/Qdrant_Request_API) | Plataforma completa: indexação + busca híbrida + MCP |
 | 3 | **BuscaFornecedor MCP** | [railway](https://buscafornecedormcp-buscafornecedor.up.railway.app/) | [FelpTB/BuscaFornecedor_MCP](https://github.com/FelpTB/BuscaFornecedor_MCP) | Site/apresentação do hub — **não é MCP runtime** |
 | 4 | **BuscaFornecedor searchAPI** | [railway](https://buscafornecedor-searchapi-buscafornecedor.up.railway.app/) | [FelpTB/BuscaFornecedor-searchAPI](https://github.com/FelpTB/BuscaFornecedor-searchAPI) | Fatia search-only + MCP (base deste workspace) |
+| 5 | **Notificacao clientes** | [railway](https://notificacao-clientes-buscafornecedor.up.railway.app/) | [maicon-abc-advise/notificacao-clientes](https://github.com/maicon-abc-advise/notificacao-clientes) | Fila email/SMS + dashboard; recebe-consulta pos-busca |
 
 Detalhes por serviço:
 
@@ -17,6 +18,7 @@ Detalhes por serviço:
 - [support-api-qdrant-request.md](support-api-qdrant-request.md)
 - [support-api-mcp-site.md](support-api-mcp-site.md)
 - [support-api-searchapi.md](support-api-searchapi.md)
+- [comms.md](comms.md) - integracao notificacao-clientes
 
 ## Mapa de composição (API completa)
 

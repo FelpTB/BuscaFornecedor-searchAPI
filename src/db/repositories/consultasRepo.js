@@ -421,6 +421,7 @@ async function persistWithPg(pool, event) {
       resultados: results.length,
       aparicoes: aparicoesOk,
       contador: contadorOk,
+      results,
       via: "pg",
     };
   } catch (e) {
@@ -557,6 +558,7 @@ async function persistWithSupabaseJs(event) {
     resultados: results.length,
     aparicoes: aparicoesOk,
     contador: contadorOk,
+    results,
     via: "supabase-js",
   };
 }

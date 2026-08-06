@@ -12,6 +12,12 @@ import { logError, logSuccess } from "../logger.js";
  */
 export function mountMcp(app, deps) {
   const transports = Object.create(null);
+  /** Auth do request HTTP atual (tools MCP leem via getAuth). */
+  let activeAuth = null;
+  const mcpDeps = {
+    ...deps,
+    getAuth: () => activeAuth,
+  };
 
   const requireMcpAuth = async (req, res) => {
     try {
@@ -46,6 +52,7 @@ export function mountMcp(app, deps) {
 
   const mcpPostHandler = async (req, res) => {
     if (!(await requireMcpAuth(req, res))) return;
+    activeAuth = req.auth;
 
     const sessionId = req.headers["mcp-session-id"];
 
@@ -59,7 +66,7 @@ export function mountMcp(app, deps) {
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
             transports[sid] = transport;
-            logSuccess("MCP", "Sessão inicializada", {
+            logSuccess("MCP", "SessÃ£o inicializada", {
               session_id: sid,
               auth: req.auth?.authenticated ?? false,
             });
@@ -70,11 +77,11 @@ export function mountMcp(app, deps) {
           const sid = transport.sessionId;
           if (sid && transports[sid]) {
             delete transports[sid];
-            logSuccess("MCP", "Sessão encerrada", { session_id: sid });
+            logSuccess("MCP", "SessÃ£o encerrada", { session_id: sid });
           }
         };
 
-        const server = createMcpServer(deps);
+        const server = createMcpServer(mcpDeps);
         await server.connect(transport);
         await transport.handleRequest(req, res, req.body);
         return;

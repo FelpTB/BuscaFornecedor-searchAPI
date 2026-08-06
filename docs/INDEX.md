@@ -24,3 +24,5 @@
 ADRs: [`../adr/`](../adr/).
 
 Cursor stack: [`.cursor/`](../.cursor/) — rules, skills, mcp.json.
+
+- [comms.md](comms.md) - camada de comunicacao / notificacao-clientes

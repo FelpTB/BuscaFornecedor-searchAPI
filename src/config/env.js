@@ -132,6 +132,12 @@ export function validateEnv({ soft = false } = {}) {
     warnings.push("REQUIRE_COMPRADOR=1 sem Supabase — buscas autenticadas falharão");
   }
 
+  const notifMode = (process.env.NOTIFICACAO_MODE || "on").trim().toLowerCase();
+  const notifOn = !(notifMode === "off" || notifMode === "0" || notifMode === "false");
+  if (notifOn && !process.env.NOTIFICACAO_API_KEY?.trim()) {
+    warnings.push("NOTIFICACAO_MODE ativo sem NOTIFICACAO_API_KEY - fila de comunicacao sera ignorada");
+  }
+
   if (missing.length > 0) {
     if (!soft) {
       const err = new Error(
