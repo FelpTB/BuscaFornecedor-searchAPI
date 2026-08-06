@@ -1,54 +1,64 @@
-# Critérios de Aceite (Definition of Done)
+# Criterios de Aceite (Definition of Done)
 
-Checklist de produto para considerar a **API de busca em funcionamento completo**.  
-Última verificação no código deste repo: **2026-08-05**.
+Checklist de produto para a **migracao n8n → API+MCP**.  
+Ultima verificacao no codigo: **2026-08-06**.
 
-Legenda: `[x]` concluído neste repositório · `[ ]` pendente.
-
----
-
-### Critérios
-
-- [x] A API/MCP capta corretamente os parâmetros e IDs de consulta vindos do front-end.
-- [ ] O Módulo de Busca consegue identificar o usuário corretamente (Subtarefa 2.4).
-- [x] O Filtro de Localidade determina com precisão as cidades dentro do raio pesquisado.
-- [x] O Query Manager vetoriza as buscas e aplica pesos, BM25 e filtros de payload sem erros.
-- [ ] O Qdrant retorna as empresas corretamente de acordo com os critérios, e o registro de histórico é salvo no Supabase com os parâmetros usados e resultados obtidos.
-- [ ] O Contador de Aparições rastreia os CNPJs, aciona o Supabase e incrementa o número de exibições conforme o esperado.
-- [ ] O Fallback Vector identifica resultados insuficientes, limpa CNPJs já listados e escala as buscas para níveis estaduais (UF) ou Nacionais com sucesso.
-- [ ] O Módulo de Envios coloca os alvos em fila e realiza o disparo de SMS e e-mails periodicamente.
-- [ ] Todo o fluxo opera de maneira fluida em código, eliminando completamente a dependência da plataforma n8n.
+Legenda: `[x]` concluido neste repositorio · `[~]` parcial · `[ ]` pendente.
 
 ---
 
-### Verificação (estado atual do código)
+### Decisao de fronteira (2026-08-06)
 
-| Critério | Status | Evidência / ressalva |
-|----------|--------|----------------------|
-| Parâmetros e IDs | **Feito** | Schema Zod em [`src/schemas/searchText.js`](../src/schemas/searchText.js); parity REST↔MCP; `search_id` e `X-Request-Id` gerados/aceitos no servidor ([`src/middleware/auth.js`](../src/middleware/auth.js), [`requestId.js`](../src/middleware/requestId.js)). |
-| Identificar usuário (2.4) | **Código pronto** | Auth híbrida + register + X-Ray Conta. Marcar `[x]` após migration + secrets. Ver [`implementacao-supabase.md`](implementacao-supabase.md). |
-| Filtro de localidade | **Feito** | [`src/clients/citiesApi.js`](../src/clients/citiesApi.js) → API-busca-cidades; X-Ray/agente monta `filter.cidade` como lista de nomes. REST/MCP aceitam a lista já expandida em `filter`. |
-| Query Manager / pesos / BM25 / filtros | **Feito** | [`executeSearchByText`](../src/searchService.js) + dual-path RRF ([`multiVectorSearch.js`](../src/multiVectorSearch.js)); planner QM no X-Ray ([`searchAgent.js`](../src/xray/searchAgent.js)). |
-| Qdrant **e** histórico Supabase | **Código pronto** | Enqueue → `consultas`. Ativar com TELEMETRY + migration + service role. |
-| Contador de Aparições | **Código pronto** | Writer `aparicoes` + agg. Requer migration `001_api_keys_aparicoes.sql`. |
-| Fallback Vector (cidade → UF → nacional) | **Pendente** | Sem loop progressivo de relaxamento / exclusão de CNPJs. Spec em GUIA §3.8 / [`workers.md`](workers.md). |
-| Módulo de Envios (SMS/e-mail) | **Pendente** | Sem fila de disparo nem workers de envio neste repo. |
-| Fluxo completo sem n8n | **Parcial** | Hot path de busca (REST/MCP/X-Ray) já roda em Node **sem** n8n. O DoD completo só fecha quando histórico, identidade, fallback, contador e envios estiverem no código. |
+**Envio / orquestracao pos-fila permanece no n8n + notificacao-clientes.**  
+A searchAPI **nao** implementa claim, disparo e-mail/SMS, confirmar-consumo, sweep, creditos, blacklist nem unsubscribe.
 
-### O que *não* foi marcado a mais
+Responsabilidade da API no modulo de envios: **orquestrar a fila** — apos busca autenticada, inserir alvos via `POST …/recebe-consulta`. O n8n continua agendando claim → envio → confirmacao.
 
-Nenhum item além dos três `[x]` acima foi promovido a concluído:
+**Fallback Vector:** o agente pergunta se o usuario deseja busca mais geral quando `result_count < final_limit` ou quando ha reclamacao sobre o resultado; so apos confirmacao executa cascata cidade → UF → nacional (sem CNPJs duplicados), visando completar o limite pedido.
 
-- O retorno do **Qdrant** já funciona, mas o critério 5 exige **também** o histórico no Supabase.
-- A API de busca **já independe de n8n** no hot path, mas o critério 9 fala do **fluxo completo** de produto.
+---
 
-### Próximos passos sugeridos (ordem)
+### Criterios (Fase 1 / Notion)
 
-1. **Identidade + histórico + aparições** — seguir [`plano-supabase-auth.md`](plano-supabase-auth.md) (fases S0–S3); ADR 010  
-2. Fallback Vector — critério 7  
-3. Módulo de Envios — critério 8  
-4. Fechar critério 9 quando 2–8 estiverem no código
+- [x] A API/MCP capta corretamente os parametros e IDs de consulta vindos do front-end.
+- [x] O Modulo de Busca identifica o usuario (auth hibrida: API key / JWT + register/login).
+- [x] O Filtro de Localidade determina cidades no raio (Cities API).
+- [x] O Query Manager vetoriza, aplica pesos, BM25 e filtros de payload.
+- [x] Qdrant + historico Supabase (`consultas` status `concluida`, parametros e resultados).
+- [x] Contador de Aparicoes + tabela `aparicoes` + `contador_aparicoes`.
+- [x] Fallback Vector (agente pergunta → `expand_search_fallback` → cascata UF/nacional).
+- [x] Orquestracao da fila (insert `recebe-consulta`) — codigo pronto; homologacao ops pendente.
+- [~] Fluxo de busca em codigo (Main/QM/localidade/historico/contador/fila/fallback). Envio periodico permanece n8n **por desenho**.
 
-Skill Cursor: `.cursor/skills/supabase-db/`
+---
 
-Ver também: [`PLANO_ESCALAVEL.md`](PLANO_ESCALAVEL.md), [`GUIA_IMPLEMENTACAO.md`](GUIA_IMPLEMENTACAO.md).
+### Mapa n8n → responsabilidade (2026-08-06)
+
+| Modulo n8n (Document Hub) | Status | Dono |
+|---------------------------|--------|------|
+| Main / Webhook busca | Feito | searchAPI |
+| Query Manager | Feito | searchAPI |
+| Filtro localidade | Feito | searchAPI |
+| Contador Aparicoes | Feito | searchAPI |
+| Historico consulta | Feito | searchAPI |
+| Identidade usuario | Feito | searchAPI |
+| Insere fila e-mail (pos-busca) | Feito (codigo) | searchAPI → notificacao |
+| Fallback Vector | Feito (agente + cascata) | searchAPI |
+| Timer claim / envio e-mail-SMS / confirmar-consumo | Fora do escopo API | n8n + notificacao-clientes |
+| Sweep / reenvio / verificar creditos | Fora do escopo API | n8n + notificacao |
+| Creditos mensal / blacklist / unsubscribe | Fora do escopo API | n8n + outros |
+
+### Verificacao operacional pendente
+
+1. Alinhar `DATABASE_URL` / `SUPABASE_URL` da searchAPI com o Postgres da API de notificacao (`POSTGRES_SCHEMA=busca_fornecedor`).
+2. Validar no X-Ray aba **5 · Fila email**: `ok > 0` apos busca autenticada (sem 404).
+3. Confirmar claim/envio n8n consumindo a fila gerada pela API.
+4. Validar no chat X-Ray: busca curta → pergunta → "sim" → `expand_search_fallback` completa resultados.
+
+### Proximos passos (ordem)
+
+1. Homologar fila e-mail ponta a ponta (persist → recebe-consulta → n8n claim).
+2. Homologar Fallback no X-Ray chat (perguntar → confirmar → UF/nacional).
+3. Fechar Fase 1 de busca quando fila + fallback estiverem estaveis em producao (n8n permanece no envio).
+
+Docs: `docs/comms.md`, `docs/fallback.md`, `docs/auth.md`, `docs/implementacao-supabase.md`.

@@ -20,6 +20,13 @@ import {
   publicMessages,
   _clearAllSessionsForTests,
 } from "../src/xray/chatSessions.js";
+import {
+  buildFallbackStages,
+  extractCnpjs,
+  mergeUniqueResults,
+  runFallbackCascade,
+  stripGeoFilter,
+} from "../src/search/fallbackSearch.js";
 
 process.env.AUTH_MODE = "off";
 process.env.QDRANT_DIMENSION_KEYS =
@@ -159,6 +166,7 @@ process.env.QDRANT_DIMENSION_KEYS =
   const names = CHAT_TOOLS.map((t) => t.function.name).sort();
   assert.ok(names.includes("register_buyer"));
   assert.ok(names.includes("search_suppliers"));
+  assert.ok(names.includes("expand_search_fallback"));
   assert.ok(names.includes("get_my_profile"));
   assert.ok(names.includes("lookup_cities"));
   assert.ok(names.includes("get_search_config"));
@@ -199,6 +207,84 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.notEqual(fresh.id, a.id);
   assert.equal(fresh.messages.length, 0);
   console.log("OK chat sessions");
+}
+
+{
+  assert.deepEqual(stripGeoFilter({ cidade: ["A"], uf: "SP", modelo_negocio: "Fabricante" }), {
+    modelo_negocio: "Fabricante",
+  });
+  const stages = buildFallbackStages(
+    { filter: { cidade: ["Campinas", "Valinhos"], modelo_negocio: "Distribuidor" } },
+    { geo: { uf: "SP" } },
+    [{ payload: { uf: "SP" } }],
+  );
+  assert.equal(stages.length, 2);
+  assert.equal(stages[0].name, "uf");
+  assert.equal(stages[0].filter.uf, "SP");
+  assert.equal(stages[0].filter.modelo_negocio, "Distribuidor");
+  assert.ok(!stages[0].filter.cidade);
+  assert.equal(stages[1].name, "nacional");
+  assert.ok(!stages[1].filter.uf);
+
+  const alreadyNational = buildFallbackStages({ filter: { modelo_negocio: "Varejo" } }, null, []);
+  assert.equal(alreadyNational.length, 0);
+
+  const existing = [
+    { posicao: 1, payload: { cnpj: "111", nome_empresa: "A" } },
+    { posicao: 2, payload: { cnpj: "222", nome_empresa: "B" } },
+  ];
+  assert.deepEqual(extractCnpjs(existing), ["111", "222"]);
+  const excluded = new Set(extractCnpjs(existing));
+  const merged = mergeUniqueResults(
+    existing,
+    [
+      { payload: { cnpj: "222", nome_empresa: "B-dup" } },
+      { payload: { cnpj: "333", nome_empresa: "C" } },
+    ],
+    10,
+    excluded,
+  );
+  assert.equal(merged.added, 1);
+  assert.equal(merged.results.length, 3);
+  assert.equal(merged.results[2].payload.cnpj, "333");
+  assert.equal(merged.results[2].posicao, 3);
+
+  let calls = 0;
+  const cascade = await runFallbackCascade({
+    baseArgs: {
+      query: "teste",
+      weights: { produto: 1 },
+      filter: { cidade: ["Campinas"], uf: "SP" },
+      final_limit: 5,
+    },
+    plan: { geo: { uf: "SP", city_name: "Campinas" } },
+    existingResults: [
+      { posicao: 1, payload: { cnpj: "1", nome_empresa: "Old" } },
+    ],
+    finalLimit: 3,
+    executeSearchByText: async (args) => {
+      calls += 1;
+      if (args.filter?.uf && !args.filter?.cidade) {
+        return {
+          results: [
+            { payload: { cnpj: "1", nome_empresa: "dup" } },
+            { payload: { cnpj: "2", nome_empresa: "UF-new" } },
+          ],
+        };
+      }
+      return {
+        results: [{ payload: { cnpj: "3", nome_empresa: "Nac" } }],
+      };
+    },
+  });
+  assert.equal(cascade.ok, true);
+  assert.equal(cascade.fallback, true);
+  assert.equal(cascade.result_count, 3);
+  assert.equal(cascade.filled, true);
+  assert.ok(cascade.expanded);
+  assert.ok(calls >= 1);
+  assert.ok(cascade.results.some((r) => r.payload.cnpj === "2"));
+  console.log("OK fallback cascade");
 }
 
 console.log("\nAll unit checks passed.");

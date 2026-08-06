@@ -1,11 +1,12 @@
 /**
  * Agente conversacional X-Ray — multi-turn com tool calling.
- * Tools: search_suppliers (QM + cities + search_text), lookup_cities, get_search_config.
+ * Tools: search_suppliers, expand_search_fallback, lookup_cities, get_search_config, auth.
  */
 
 import OpenAI from "openai";
 import { fetchCitiesNearby } from "../clients/citiesApi.js";
 import { planSearchToolCall } from "./searchAgent.js";
+import { runFallbackCascade } from "../search/fallbackSearch.js";
 import {
   getOrCreateSession,
   resetSession,
@@ -135,6 +136,24 @@ export const CHAT_TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "expand_search_fallback",
+      description:
+        "Fallback Vector: amplia a ÚLTIMA busca da sessão (cidade → UF → nacional), excluindo CNPJs já listados, para tentar completar o final_limit. Chame SOMENTE após o usuário CONFIRMAR que quer uma busca mais geral, ou se ele pedir explicitamente expansão/busca estadual/nacional. NÃO chame automaticamente só porque faltaram resultados.",
+      parameters: {
+        type: "object",
+        properties: {
+          final_limit: {
+            type: "integer",
+            description: "Opcional — override do limite pedido; default = da última busca",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 function buildSystemPrompt(config, auth) {
@@ -157,22 +176,53 @@ Comportamento:
 1. Guie por linguagem natural. Pode clarificar produto, região, modelo de negócio.
 2. Conta nova: peça nome + email + senha e chame register_buyer. Conta existente: peça email + senha e chame login_buyer. Em ambos os casos mostre a API key UMA vez e diga para colar no campo "API key" do X-Ray e clicar em "Usar chave".
 3. Se register_buyer retornar EMAIL_EXISTS, use login_buyer.
-4. NÃO invente fornecedores. Só cite resultados de search_suppliers.
+4. NÃO invente fornecedores. Só cite resultados de search_suppliers ou expand_search_fallback.
 5. Busque quando o briefing estiver claro. Refinamentos geram nova busca.
-6. Após busca, resuma tops e sugira ajustes. Histórico/aparições gravam async no Supabase quando autenticado.
-7. Evite jargão interno (Query Manager, RRF) na conversa.
+6. Após busca, resuma tops. Histórico/aparições gravam async no Supabase quando autenticado.
+7. Evite jargão interno (Query Manager, RRF, Fallback Vector) na conversa — fale em "busca mais geral / estadual / nacional".
+
+Fallback (busca mais geral) — regra obrigatória:
+- Se search_suppliers retornar result_count < requested_limit (campo suggest_broader_search=true), AO FINAL da resposta PERGUNTE se o usuário deseja uma busca mais geral para completar a quantidade pedida. NÃO chame expand_search_fallback nesse mesmo turno.
+- Se o usuário reclamar dos resultados (poucos, ruins, incompletos, "só isso?", "não atende", etc.), PERGUNTE se quer expandir para estadual/nacional — a menos que ele já tenha pedido explicitamente a expansão.
+- Só chame expand_search_fallback quando o usuário confirmar (sim, pode, quero, faça, etc.) OU pedir explicitamente busca mais ampla/estadual/nacional.
+- Depois do fallback, diga se completou o limite e quais etapas usou (estadual/nacional) em linguagem simples.
 
 Config: dims [${dims}]; BM25 ${config?.bm25?.vector_name ? "on" : "off"}.`;
+}
+
+function mapResultTop(results, limit = 12) {
+  return (results || []).slice(0, limit).map((r) => {
+    const p = r.payload || {};
+    return {
+      posicao: r.posicao,
+      nome_empresa: p.nome_empresa || null,
+      cnpj: p.cnpj || null,
+      cidade: p.cidade || null,
+      uf: p.uf || null,
+      modelo_negocio: p.modelo_negocio || null,
+      score_final: r.score_final ?? null,
+      descricao: typeof p.descricao === "string" ? p.descricao.slice(0, 160) : null,
+    };
+  });
 }
 
 /** Resume resultados para o LLM (não o payload inteiro). */
 function summarizeSearchForLlm(plan, search) {
   const results = Array.isArray(search?.results) ? search.results : [];
+  const requested =
+    Number(plan?.mcp_tool_call?.arguments?.final_limit) ||
+    Number(search?.final_limit) ||
+    results.length;
+  const shortfall = Math.max(0, requested - results.length);
   return {
     ok: true,
     intent: plan?.intent ?? null,
     search_id: search?.search_id ?? null,
     latency_ms: search?.latency_ms ?? null,
+    requested_limit: requested,
+    result_count: results.length,
+    shortfall,
+    suggest_broader_search: shortfall > 0,
     geo: plan?.geo
       ? {
           city_name: plan.geo.city_name,
@@ -184,20 +234,34 @@ function summarizeSearchForLlm(plan, search) {
           sample: plan.geo.city_names_sample || null,
         }
       : null,
-    result_count: results.length,
-    top: results.slice(0, 12).map((r) => {
-      const p = r.payload || {};
-      return {
-        posicao: r.posicao,
-        nome_empresa: p.nome_empresa || null,
-        cnpj: p.cnpj || null,
-        cidade: p.cidade || null,
-        uf: p.uf || null,
-        modelo_negocio: p.modelo_negocio || null,
-        score_final: r.score_final ?? null,
-        descricao: typeof p.descricao === "string" ? p.descricao.slice(0, 160) : null,
-      };
-    }),
+    top: mapResultTop(results),
+    hint:
+      shortfall > 0
+        ? "Faltaram resultados vs o pedido. PERGUNTE se o usuário quer busca mais geral; só chame expand_search_fallback após confirmação."
+        : null,
+  };
+}
+
+function summarizeFallbackForLlm(cascade, plan) {
+  return {
+    ok: true,
+    fallback: true,
+    expanded: cascade.expanded,
+    filled: cascade.filled,
+    reason: cascade.reason || null,
+    requested_limit: cascade.requested_limit,
+    result_count_before: cascade.result_count_before,
+    result_count: cascade.result_count,
+    shortfall: cascade.shortfall,
+    stages: (cascade.stages || []).map((s) => ({
+      name: s.name,
+      ok: s.ok,
+      added: s.added ?? 0,
+      fetched: s.fetched ?? 0,
+      error: s.error || null,
+    })),
+    intent: plan?.intent ?? null,
+    top: mapResultTop(cascade.results),
   };
 }
 
@@ -229,6 +293,7 @@ async function executeTool(name, args, ctx) {
     onCities,
     auth,
     assertCanSearch,
+    session,
   } = ctx;
 
   if (name === "get_search_config") {
@@ -382,6 +447,84 @@ async function executeTool(name, args, ctx) {
     }
   }
 
+  if (name === "expand_search_fallback") {
+    if (typeof assertCanSearch === "function") {
+      try {
+        assertCanSearch(auth || {});
+      } catch (e) {
+        return {
+          ok: false,
+          error: e.message || String(e),
+          status: e.status,
+          needs_register: e.status === 401 || e.status === 403,
+        };
+      }
+    }
+
+    const plan = session?.lastPlan || null;
+    const prevSearch = session?.lastSearch || null;
+    const baseArgs = plan?.mcp_tool_call?.arguments;
+    if (!baseArgs || !prevSearch) {
+      return {
+        ok: false,
+        error: "Nenhuma busca anterior nesta sessão. Execute search_suppliers primeiro.",
+      };
+    }
+
+    const final_limit =
+      Number.isInteger(Number(args.final_limit)) && Number(args.final_limit) >= 1
+        ? Number(args.final_limit)
+        : Number(baseArgs.final_limit) || defaults.final_limit;
+
+    try {
+      const existingResults = Array.isArray(prevSearch.results) ? prevSearch.results : [];
+      const cascade = await runFallbackCascade({
+        baseArgs,
+        plan,
+        existingResults,
+        finalLimit: final_limit,
+        executeSearchByText,
+      });
+
+      const search = {
+        ...(prevSearch || {}),
+        results: cascade.results,
+        result_count: cascade.result_count,
+        fallback: true,
+        fallback_meta: {
+          stages: cascade.stages,
+          result_count_before: cascade.result_count_before,
+          filled: cascade.filled,
+          expanded: cascade.expanded,
+        },
+        search_id: prevSearch?.search_id || null,
+      };
+
+      const full = {
+        ...plan,
+        intent: plan?.intent ?? null,
+        search_duration_ms: (cascade.stages || []).reduce(
+          (a, s) => a + (s.duration_ms || 0),
+          0,
+        ),
+        search,
+        fallback: cascade,
+        mcp_tool_call: {
+          name: "search_text",
+          arguments: {
+            ...baseArgs,
+            final_limit,
+            fallback: true,
+          },
+        },
+      };
+      onSearch?.(full);
+      return summarizeFallbackForLlm(cascade, plan);
+    } catch (e) {
+      return { ok: false, error: e.message || String(e), status: e.status };
+    }
+  }
+
   return { ok: false, error: `Tool desconhecida: ${name}` };
 }
 
@@ -427,6 +570,7 @@ export async function runChatTurn({
     executeSearchByText,
     auth,
     assertCanSearch,
+    session,
     defaults: {
       final_limit:
         Number.isInteger(Number(final_limit)) && Number(final_limit) >= 1
@@ -438,11 +582,14 @@ export async function runChatTurn({
     onSearch: (bundle) => {
       lastSearchBundle = bundle;
       lastPlan = bundle;
+      const toolName = bundle?.fallback ? "expand_search_fallback" : "search_suppliers";
       actions.push({
-        tool: "search_suppliers",
+        tool: toolName,
         intent: bundle.intent,
         result_count: bundle.search?.results?.length ?? 0,
         search_id: bundle.search?.search_id,
+        fallback: Boolean(bundle.fallback),
+        stages: bundle.fallback?.stages?.map((s) => s.name) || null,
         geo: bundle.geo
           ? {
               city: bundle.geo.city_name,
@@ -451,6 +598,8 @@ export async function runChatTurn({
             }
           : null,
       });
+      // Persiste na sessão imediatamente para o fallback no mesmo turno (se houver)
+      setSessionLastSearch(session, bundle, bundle.search);
       onSearchCompleted?.(bundle);
     },
     onCities: (nearby) => {
@@ -532,6 +681,7 @@ export async function runChatTurn({
       if (name === "get_my_profile") {
         actions.push({ tool: "get_my_profile" });
       }
+      // expand_search_fallback / search_suppliers já registram via onSearch
     }
   }
 
@@ -593,11 +743,12 @@ export async function runChatTurn({
     reasoning: lastPlan?.reasoning ?? null,
     simulation: {
       client: "conversational-agent → microsoft-copilot-mcp-preview",
-      role: "Chat B2B + Query Manager + Cities API",
+      role: "Chat B2B + Query Manager + Cities API + Fallback",
       tools_available: CHAT_TOOLS.map((t) => t.function.name),
       transport: "same-process (X-Ray) → produção usará Streamable HTTP /mcp",
       tool_rounds: rounds,
     },
+    fallback: lastSearchBundle?.fallback ?? null,
   };
 }
 

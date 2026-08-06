@@ -14,12 +14,14 @@ Pipeline quando busca:
 4. Geo opcional → API-busca-cidades → `filter.cidade = [lista]`
 5. Executa `search_text` (mesmo núcleo REST/MCP)
 6. Responde em NL resumindo resultados
+7. Se faltarem resultados vs `final_limit` (ou houver reclamação), **pergunta** se deseja busca mais geral; só após confirmação chama `expand_search_fallback` (UF → nacional)
 
 ## Tools do chat
 
 | Tool | Função |
 |------|--------|
 | `search_suppliers` | Briefing NL → QM + cities + `search_text` |
+| `expand_search_fallback` | Amplia a última busca (UF → nacional), exclui CNPJs já listados — só após confirmação do usuário |
 | `lookup_cities` | Confirma cobertura do raio |
 | `get_search_config` | Espelho de `/config` |
 
