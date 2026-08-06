@@ -86,7 +86,7 @@ async function runPump() {
           result,
         });
         // Comunicação: só após consulta existir no banco (API de notificação exige id_consulta).
-        if (result?.ok) {
+        if (result?.ok && result.visible_on_supabase !== false) {
           const queued = enqueueRecebeConsultaAfterPersist({
             search_id: event.search_id,
             enrichedResults: result.results || [],
@@ -97,13 +97,22 @@ async function runPump() {
             logSuccess("comms", "recebe-consulta enfileirado", {
               search_id: event.search_id,
               count: queued.count,
+              via: result.via,
+              db_mismatch_recovered: result.db_mismatch_recovered || false,
             });
           } else if (queued.reason && queued.reason !== "notificacao_off") {
-            logWarn("comms", "recebe-consulta não enfileirado", {
+            logWarn("comms", "recebe-consulta nao enfileirado", {
               search_id: event.search_id,
               reason: queued.reason,
             });
           }
+        } else if (result?.ok && result.visible_on_supabase === false) {
+          logWarn("comms", "consulta nao visivel no Supabase — fila de email adiadas", {
+            search_id: event.search_id,
+            via: result.via,
+            reason: result.reason,
+            hint: "DATABASE_URL e SUPABASE_URL devem ser o mesmo projeto; notificacao: POSTGRES_SCHEMA=busca_fornecedor",
+          });
         }
       })
       .catch((err) => {

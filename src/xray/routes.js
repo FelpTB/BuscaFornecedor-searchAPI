@@ -168,6 +168,14 @@ export function createXrayRouter() {
   router.get("/search/xray/comms/status", async (_req, res, next) => {
     try {
       const snap = getCommsStatusSnapshot();
+      const supabaseHost = (process.env.SUPABASE_URL || "").replace(/^https?:\/\//, "").split("/")[0] || null;
+      const databaseUrl = process.env.DATABASE_URL || "";
+      let databaseHost = null;
+      try {
+        if (databaseUrl) databaseHost = new URL(databaseUrl).hostname;
+      } catch {
+        databaseHost = "(invalid DATABASE_URL)";
+      }
       return res.json({
         mode: getNotificacaoMode(),
         configured: isNotificacaoConfigured(),
@@ -175,12 +183,19 @@ export function createXrayRouter() {
         endpoint: "/v1/interno/orquestracao/recebe-consulta",
         queue_depth: getCommsQueueDepth(),
         ...snap,
+        persist: {
+          prefer_pg: (process.env.PREFER_PG_PERSIST || "").trim() === "1",
+          supabase_host: supabaseHost,
+          database_host: databaseHost,
+          note: "Consultas sao gravadas via SUPABASE_URL (PostgREST). A API de notificacao deve usar o MESMO Postgres com POSTGRES_SCHEMA=busca_fornecedor.",
+        },
         flow: [
-          "1. Busca autenticada",
-          "2. Persist consulta (telemetria)",
-          "3. POST recebe-consulta por fornecedor com cnpj_basico",
+          "1. Busca autenticada (nao bloqueia UX)",
+          "2. Persist consulta no Supabase (async) + read-back",
+          "3. POST recebe-consulta por fornecedor (retry em 404)",
           "4. n8n claim/envia email depois (fora desta API)",
         ],
+        common_404: "Se err=consulta nao encontrada: DATABASE_URL da searchAPI != DB da notificacao, ou POSTGRES_SCHEMA != busca_fornecedor na notificacao.",
       });
     } catch (err) {
       return next(err);

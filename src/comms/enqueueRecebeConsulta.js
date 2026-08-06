@@ -21,6 +21,42 @@ import {
   getCommsStatusSnapshot,
 } from "./commsLog.js";
 
+
+async function sleep(ms) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+/** Retenta 404 (consulta ainda nao visivel no DB da notificacao). */
+async function postRecebeConsultaWithRetry(body, { retries = 4 } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await postRecebeConsulta(body);
+    } catch (err) {
+      lastErr = err;
+      if (err?.status !== 404 || attempt === retries) throw err;
+      const wait = Math.min(8000, 800 * 2 ** attempt);
+      logWarn("comms", "recebe-consulta 404 — retry", {
+        id_consulta: body.id_consulta,
+        cnpj_basico: body.cnpj_basico,
+        attempt: attempt + 1,
+        wait_ms: wait,
+      });
+      recordCommsEvent({
+        type: "retry",
+        search_id: body.id_consulta,
+        id_consulta: body.id_consulta,
+        cnpj_basico: body.cnpj_basico,
+        status: 404,
+        attempt: attempt + 1,
+        wait_ms: wait,
+      });
+      await sleep(wait);
+    }
+  }
+  throw lastErr;
+}
+
 const queue = [];
 let pumping = false;
 const MAX_CONCURRENCY = Number(process.env.NOTIFICACAO_CONCURRENCY) || 3;
@@ -94,7 +130,7 @@ async function runPump() {
     const body = queue.shift();
     inflight += 1;
     Promise.resolve()
-      .then(() => postRecebeConsulta(body))
+      .then(() => postRecebeConsultaWithRetry(body))
       .then((res) => {
         recordCommsEvent({
           type: "ok",

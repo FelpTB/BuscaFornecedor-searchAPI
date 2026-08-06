@@ -60,3 +60,15 @@ Aba **5 · Fila email** em /search/xray:
 - **Preview payloads** — POST /search/xray/comms/preview (dry-run)
 
 Apos busca autenticada, o search_id e preenchido e o painel faz poll automatico.
+
+## Requisitos de banco (404 consulta nao encontrada)
+
+A API de notificacao faz `SELECT` em `{POSTGRES_SCHEMA}.consultas` (ex.: `busca_fornecedor.consultas`).
+
+1. **searchAPI** grava via `SUPABASE_URL` (PostgREST) no projeto abcAdvise.
+2. **notificacao-clientes** deve usar o **mesmo** `DATABASE_URL` desse projeto.
+3. Em notificacao: `POSTGRES_SCHEMA=busca_fornecedor`.
+
+Se `DATABASE_URL` da searchAPI apontar para outro Postgres, a telemetria “ok” local nao aparece no Supabase e o `recebe-consulta` retorna 404.
+
+O hot path da busca nao espera telemetria/fila (fire-and-forget).

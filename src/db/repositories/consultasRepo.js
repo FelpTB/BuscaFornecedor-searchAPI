@@ -263,11 +263,49 @@ export async function persistSearchCompleted(event) {
     return { skipped: true, reason: "missing_user_or_search_id" };
   }
 
-  const pool = getPgPool();
-  if (pool) {
-    return persistWithPg(pool, event);
+  /**
+   * Preferencia: PostgREST (SUPABASE_URL) — mesmo projeto do auth e da API de notificacao.
+   * PG (DATABASE_URL) so se PREFER_PG_PERSIST=1; apos PG, valida read-back no Supabase
+   * e faz fallback se DATABASE_URL apontar para outro banco.
+   */
+  const preferPg =
+    (process.env.PREFER_PG_PERSIST || "").trim() === "1" && Boolean(getPgPool());
+
+  let result;
+  if (preferPg) {
+    result = await persistWithPg(getPgPool(), event);
+  } else {
+    result = await persistWithSupabaseJs(event);
   }
-  return persistWithSupabaseJs(event);
+
+  if (result?.skipped && result.reason === "already_persisted") {
+    const visible = await getConsultaById(event.search_id);
+    return { ...result, visible_on_supabase: Boolean(visible) };
+  }
+
+  if (!result?.ok) return result;
+
+  const visible = await getConsultaById(event.search_id);
+  if (visible) {
+    return { ...result, visible_on_supabase: true };
+  }
+
+  // PG gravou em outro DB (ou insert nao refletiu): forca escrita via Supabase JS
+  logWarn("telemetry", "consulta nao visivel no Supabase apos persist — fallback supabase-js", {
+    search_id: event.search_id,
+    via: result?.via,
+    hint: "Alinhe DATABASE_URL ao projeto SUPABASE_URL; na API notificacao use POSTGRES_SCHEMA=busca_fornecedor",
+  });
+  const fallback = await persistWithSupabaseJs(event);
+  const visible2 = await getConsultaById(event.search_id);
+  return {
+    ...fallback,
+    ok: Boolean(fallback?.ok) && Boolean(visible2),
+    visible_on_supabase: Boolean(visible2),
+    db_mismatch_recovered: Boolean(visible2),
+    prior_via: result?.via || null,
+    results: fallback?.results || result?.results,
+  };
 }
 
 async function persistWithPg(pool, event) {
