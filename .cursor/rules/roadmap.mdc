@@ -1,20 +1,13 @@
 ---
-description: Distingue código atual, PLANO_ESCALAVEL e GUIA_IMPLEMENTACAO
+description: Distingue código atual vs evolução futura (Notion)
 alwaysApply: true
 ---
 
-# Roadmap vs implementação
+# Roadmap vs código
 
-Antes de escrever código “como se já tivesse fila/auth/Postgres”:
+1. Se a tarefa for sobre o que **já roda** → implementar/alterar só em `src/` (+ `sql/`).
+2. Evoluções futuras (BullMQ, Entra, workers) → só com pedido explícito; documentar no Notion Document Hub.
+3. Nunca misturar "já existe" com "planejado" na mesma resposta sem rotular.
 
-1. Confirmar no `src/` se o componente existe.
-2. Se for evolução deste repo → seguir fases de `docs/PLANO_ESCALAVEL.md`.
-3. Se for visão de longo prazo (busca 100% async, RabbitMQ, Query Manager regional/nacional) → `docs/GUIA_IMPLEMENTACAO.md` + ADRs — **propor**, não assumir feito.
-
-## Ordem de evolução deste repo
-
-Fase 0 ✅ núcleo → **Auth+Supabase (plano-supabase-auth S0–S3 / ADR 010)** → telemetria BullMQ → cotas → partições → hardening.
-
-Hot path **nunca** espera write no Supabase (princípio do PLANO + ADR 010).
-
-DoD: `docs/aceitacao.md`. Auth/histórico/aparições: `docs/plano-supabase-auth.md`.
+DoD / status de fase: Notion Roadmap **(Fase 1)** + Document Hub *SearchAPI + MCP (Railway)*.
+Auth/histórico: Hub Supabase + código em `src/auth`, `src/telemetry`, `src/db`.

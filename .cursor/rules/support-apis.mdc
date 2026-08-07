@@ -5,7 +5,7 @@ alwaysApply: false
 
 # APIs de suporte
 
-Ao integrar regional search, ingestão ou MCP hub, consultar `docs/support-apis.md` e ADR 008.
+Ao integrar regional search, ingestão ou MCP hub, consultar Notion Document Hub (*SearchAPI + MCP* / páginas de suporte) e o código em `src/clients/`.
 
 | Serviço | Usar para | Não usar para |
 |---------|-----------|---------------|

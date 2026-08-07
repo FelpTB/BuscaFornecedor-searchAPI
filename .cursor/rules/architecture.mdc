@@ -7,9 +7,9 @@ alwaysApply: true
 
 ## Stack atual (fonte da verdade)
 
-Node 20+ ESM · Express · MCP Streamable HTTP · Qdrant · OpenAI · Railway.
+Node 20+ ESM · Express · MCP Streamable HTTP · Qdrant · OpenAI · Supabase · Railway.
 
-**Não** inventar FastAPI, RabbitMQ, PostgreSQL ou workers a menos que a tarefa peça explicitamente implementar o roadmap.
+**Não** inventar FastAPI, RabbitMQ ou workers a menos que a tarefa peça explicitamente.
 
 ## Camadas
 
@@ -19,24 +19,23 @@ REST (/search/text) ──┐
 MCP (/mcp tools) ─────┘                                    │
                                                            ▼
                                                          Qdrant
+(+ telemetria async → Supabase; comms → notificacao-clientes)
 ```
 
-- **Portas** (`routes/`, `mcp/`): autenticam, validam, delegam. Sem regra de negócio.
-- **Serviço** (`searchService.js`): única fonte de lógica de busca.
-- **Infra** (`qdrantClient.js`, `embeddings.js`): clientes; sem orquestração de domínio.
+- **Portas** (`routes/`, `mcp/`): autenticam, validam, delegam.
+- **Serviço** (`searchService.js` + `src/search/`): lógica de busca / fallback / display.
+- **Infra** (`qdrantClient.js`, `embeddings.js`, `clients/`): clientes.
 
-## Princípios (não negociar)
+## Princípios
 
-1. REST e MCP compartilham o **mesmo** serviço — nunca duplicar lógica.
+1. REST e MCP compartilham o **mesmo** serviço.
 2. Todo endpoint de negócio tem **tool MCP correspondente**.
-3. Hot path = sync (OpenAI + Qdrant). Persistência/telemetria futura = async (ver `docs/PLANO_ESCALAVEL.md`).
-4. Respeitar padrões existentes; não introduzir DI containers, ORM ou filas sem tarefa explícita.
-5. Antes de decisões arquiteturais, consultar `docs/architecture.md` e `adr/`.
-
-## Roadmap vs código
+3. Hot path = sync (OpenAI + Qdrant). Telemetria/comms = async após resposta.
+4. Sem DI containers / ORM / filas novas sem pedido explícito.
+5. Docs de produto = Notion Document Hub (não espelhar em `docs/` longos).
 
 | Fonte | Uso |
 |-------|-----|
-| Código em `src/` | O que existe hoje |
-| `docs/PLANO_ESCALAVEL.md` | Evolução deste repo (API key, Redis/BullMQ, Supabase) |
-| `docs/GUIA_IMPLEMENTACAO.md` | Visão-alvo de longo prazo — **não** descrever como implementado |
+| `src/` | O que existe hoje |
+| Notion Hub *SearchAPI + MCP* | Docs / DoD / ops |
+| Roadmap Fase 1 | Status migração n8n |

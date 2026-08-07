@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { createApp } from "./app.js";
 import { validateEnv, getServerConfig } from "./config/env.js";
+import { isXrayEnabled } from "./config/features.js";
 import { logSuccess } from "./logger.js";
 
 const envResult = validateEnv({ soft: process.env.NODE_ENV === "test" });
@@ -12,6 +13,7 @@ if (envResult.warnings?.length) {
 
 const app = createApp();
 const { port: PORT, host: HOST, authMode } = getServerConfig();
+const xrayOn = isXrayEnabled();
 
 const server = app.listen(PORT, HOST, () => {
   logSuccess("boot", "BuscaFornecedor API+MCP online", {
@@ -20,9 +22,10 @@ const server = app.listen(PORT, HOST, () => {
     mcp: "/mcp",
     search: "/search/text",
     auth_mode: authMode,
+    xray: xrayOn,
   });
   console.log(
-    `API http://${HOST}:${PORT}  |  MCP /mcp  |  POST /search/text  |  X-Ray /search/xray  |  auth=${authMode}`,
+    `API http://${HOST}:${PORT}  |  MCP /mcp  |  POST /search/text  |  X-Ray ${xrayOn ? "/search/xray" : "off"}  |  auth=${authMode}`,
   );
 });
 

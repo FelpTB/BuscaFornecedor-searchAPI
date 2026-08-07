@@ -5,13 +5,14 @@ alwaysApply: true
 
 # Notion — manter projeto atualizado
 
-Após fechar feature, critério DoD, mudança de auth/busca/X-Ray/Supabase/Railway, ou atualizar `docs/` relevantes:
+Após fechar feature, critério DoD, mudança de auth/busca/X-Ray/Supabase/Railway:
 
 1. Ler e seguir a skill **`notion-sync`** (`.cursor/skills/notion-sync/`).
 2. Atualizar **Busca_Fornecedor Roadmap** (status da fase + nota de progresso).
 3. Atualizar ou criar doc no **Document Hub** (Category: Technical Documentation, Projeto: Busca Fornecedor).
-4. Manter `docs/` do repo alinhado; Notion não substitui ADRs/aceitacao — complementa.
+4. **Não** recriar espelhos longos em `docs/` — o Hub é a fonte documental.
+5. Manter `README.md` / `AGENTS.md` / `.env.example` no repo (operacionais).
 
-Não inventar status. Não colar secrets. Preferir append de progresso à substituição total de páginas.
+Não inventar status. Não colar secrets. Preferir append de progresso.
 
-IDs e mapas: `.cursor/skills/notion-sync/reference.md`.
+IDs: `.cursor/skills/notion-sync/reference.md`.

@@ -74,18 +74,13 @@ Workspace: **ABC Advise**. MCP: `user-notion`.
 
 ## Document Hub — docs técnicos Busca Fornecedor
 
-| Doc name | page_id | Repo espelho (se houver) |
-|----------|---------|--------------------------|
-| Documentação Técnica Supabase | `341dca3e-b7d8-80a2-baac-dac75e4168d0` | `docs/plano-supabase-auth.md`, `docs/implementacao-supabase.md` |
-| Documentação Técnica Qdrant | `341dca3e-b7d8-809f-a655-eff481e08b65` | `docs/` + ADR search |
-| Documentação Técnica Railway | `341dca3e-b7d8-80a5-957d-f116e33f88c1` | skill `railway-deploy` |
-| Documentação Técnica N8N | `341dca3e-b7d8-80f2-8cb3-de5b35160971` | legado (Fase 1 migra embora) |
-| Documentação Técnica Stripe | `341dca3e-b7d8-807f-8bcd-c20fc8e66eaf` | — |
-| Documentação Técnica PostgreSQL Local | `341dca3e-b7d8-8054-be02-c11dd0aaf080` | — |
-| Documentação Técnica Front-end Lovable | `341dca3e-b7d8-8052-a995-ccff5027e353` | — |
-| Rascunho Roadmap App Microsoft | `3acdca3e-b7d8-8090-965f-f01cef45b7a5` | Strategy |
-| Docs testes Julho | `3a7dca3e-b7d8-8062-8af9-ff783bd16c4e` | — |
-| Mods plataforma Julho | `3a6dca3e-b7d8-80d7-bcf4-fa93c0c4b94a` | — |
+| Doc name | page_id | Notas |
+|----------|---------|-------|
+| **Documentação Técnica SearchAPI + MCP (Railway)** | `3b5dca3e-b7d8-814a-9092-fe7122b7fb53` | **Canônico desta API** (DoD, estrutura, env, checklist) |
+| Documentação Técnica Supabase | `341dca3e-b7d8-80a2-baac-dac75e4168d0` | Auth / schema |
+| Documentação Técnica Qdrant | `341dca3e-b7d8-809f-a655-eff481e08b65` | Vetores |
+| Documentação Técnica Railway | `341dca3e-b7d8-80a5-957d-f116e33f88c1` | Deploy |
+| Documentação Técnica N8N | `341dca3e-b7d8-80f2-8cb3-de5b35160971` | Legado parcial (envio) |
 
 ## Template — progresso na página da fase
 

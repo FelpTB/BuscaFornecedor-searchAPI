@@ -5,6 +5,7 @@ import { createXrayRouter } from "./xray/routes.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { LIMITS, getServerConfig } from "./config/env.js";
+import { isXrayEnabled } from "./config/features.js";
 
 /**
  * Factory do app Express — testável e com middleware em ordem fixa.
@@ -13,7 +14,7 @@ import { LIMITS, getServerConfig } from "./config/env.js";
  * 1. requestId
  * 2. json body
  * 3. health (público)
- * 4. X-Ray (harness / pré-proxy Microsoft)
+ * 4. X-Ray (harness — desligável via XRAY_ENABLED=0)
  * 5. API router (auth + business)
  * 6. MCP (auth alinhada)
  * 7. 404 + errorHandler
@@ -34,7 +35,8 @@ export function createApp() {
       mcp: "/mcp",
       search: "/search/text",
       config: "/config",
-      search_xray: "/search/xray",
+      search_xray: isXrayEnabled() ? "/search/xray" : null,
+      xray_enabled: isXrayEnabled(),
       auth_mode: serverCfg.authMode,
       auth_modes: serverCfg.authModes,
       require_comprador: serverCfg.requireComprador,
@@ -42,7 +44,9 @@ export function createApp() {
     });
   });
 
-  app.use(createXrayRouter());
+  if (isXrayEnabled()) {
+    app.use(createXrayRouter());
+  }
   app.use(createApiRouter());
   mountMcp(app, { executeSearchByText, getPublicConfig });
 
