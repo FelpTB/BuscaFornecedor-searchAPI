@@ -21,6 +21,7 @@ import {
 } from "../db/repositories/conversasRepo.js";
 import { hydrateChatSessionIfNeeded } from "../conversations/persistChat.js";
 import { forgetSession } from "../xray/chatSessions.js";
+import { createRateLimiter } from "../middleware/rateLimit.js";
 
 /**
  * Rotas HTTP de negócio.
@@ -30,6 +31,22 @@ export function createApiRouter() {
   const router = Router();
 
   router.use(authMiddleware);
+
+  const authAbuseLimit = createRateLimiter({
+    windowMs: 15 * 60_000,
+    max: 10,
+    message: "Too many auth attempts",
+  });
+  const searchRateLimit = createRateLimiter({
+    windowMs: 60_000,
+    max: 120,
+    message: "Too many search requests",
+    keyFn: (req) => {
+      const prefix = req.auth?.keyPrefix;
+      if (prefix) return `search:key:${prefix}`;
+      return `search:ip:${req.ip || req.headers["x-forwarded-for"] || "unknown"}`;
+    },
+  });
 
   router.get("/config", (_req, res) => {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -53,8 +70,8 @@ export function createApiRouter() {
     }
   });
 
-  /** Cadastro comprador + API key (1x). Público (rate-limit futuro). */
-  router.post("/auth/register-buyer", async (req, res, next) => {
+  /** Cadastro comprador + API key (1x). Público. */
+  router.post("/auth/register-buyer", authAbuseLimit, async (req, res, next) => {
     try {
       const out = await registerBuyer({
         email: req.body?.email,
@@ -72,7 +89,7 @@ export function createApiRouter() {
   });
 
   /** Conta existente: email+senha → nova API key. */
-  router.post("/auth/login-buyer", async (req, res, next) => {
+  router.post("/auth/login-buyer", authAbuseLimit, async (req, res, next) => {
     try {
       const out = await loginBuyer({
         email: req.body?.email,
@@ -177,10 +194,10 @@ export function createApiRouter() {
   /**
    * POST /search/text — busca híbrida.
    */
-  router.post("/search/text", async (req, res, next) => {
+  router.post("/search/text", searchRateLimit, async (req, res, next) => {
     const searchId = createSearchId();
     try {
-      assertCanSearch(req.auth);
+      await assertCanSearch(req.auth);
 
       const parsed = parseSearchTextBody(req.body || {});
       if (!parsed.success) {

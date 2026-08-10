@@ -3,6 +3,7 @@
  * Shape Entra-ready (provider field).
  */
 
+import { createHash } from "node:crypto";
 import { getAuthModes, requireComprador } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
 import { getSupabaseAdmin, isSupabaseConfigured } from "../db/supabaseAdmin.js";
@@ -28,6 +29,19 @@ const CACHE_TTL_MS = Number(process.env.AUTH_CACHE_TTL_MS) || 120_000;
  *   comprador: { nome: string|null, tierBusca: string, limiteBuscas: number, buscasRealizadas: number }|null
  * }} AuthContext
  */
+
+/** Hash estável para cache de JWT (nunca usar prefixo do token). */
+export function hashAuthToken(token) {
+  return createHash("sha256").update(String(token || ""), "utf8").digest("hex");
+}
+
+function jwtCacheKey(token) {
+  return `jwt:${hashAuthToken(token)}`;
+}
+
+function apiKeyCacheKey(keyHash) {
+  return `ak:${keyHash}`;
+}
 
 /** @returns {AuthContext} */
 export function anonymousAuth() {
@@ -55,6 +69,19 @@ function cacheGet(key) {
 
 function cacheSet(key, value) {
   cache.set(key, { value, exp: Date.now() + CACHE_TTL_MS });
+}
+
+export function invalidateAuthCacheForApiKeyHash(keyHash) {
+  if (!keyHash) return;
+  cache.delete(apiKeyCacheKey(keyHash));
+}
+
+/** Invalida entradas de cache cujo AuthContext.apiKeyId bate. */
+export function invalidateAuthCacheForApiKeyId(apiKeyId) {
+  if (!apiKeyId) return;
+  for (const [k, hit] of cache) {
+    if (hit?.value?.apiKeyId === apiKeyId) cache.delete(k);
+  }
 }
 
 export function extractBearerOrApiKey(headers = {}) {
@@ -117,7 +144,7 @@ async function resolveEnvApiKey(token) {
 async function resolveSupabaseApiKey(token) {
   if (!isSupabaseConfigured()) return null;
   const keyHash = hashApiKey(token);
-  const cached = cacheGet(`ak:${keyHash}`);
+  const cached = cacheGet(apiKeyCacheKey(keyHash));
   if (cached) return { ...cached };
 
   const row = await findApiKeyByHash(keyHash);
@@ -135,14 +162,15 @@ async function resolveSupabaseApiKey(token) {
     comprador: null,
   };
   ctx = await enrichWithComprador(ctx);
-  cacheSet(`ak:${keyHash}`, ctx);
+  cacheSet(apiKeyCacheKey(keyHash), ctx);
   touchApiKeyLastUsed(row.id).catch(() => {});
   return ctx;
 }
 
 async function resolveSupabaseJwt(token) {
   if (!isSupabaseConfigured()) return null;
-  const cached = cacheGet(`jwt:${token.slice(0, 24)}`);
+  const key = jwtCacheKey(token);
+  const cached = cacheGet(key);
   if (cached) return { ...cached };
 
   const sb = getSupabaseAdmin();
@@ -160,7 +188,7 @@ async function resolveSupabaseJwt(token) {
     comprador: null,
   };
   ctx = await enrichWithComprador(ctx);
-  cacheSet(`jwt:${token.slice(0, 24)}`, ctx);
+  cacheSet(key, ctx);
   return ctx;
 }
 
@@ -231,30 +259,56 @@ function enforceCompradorGate(ctx) {
   return ctx;
 }
 
-/** Gate explícito para rotas de busca. */
-export function assertCanSearch(auth) {
+/**
+ * Gate explícito para rotas/tools de busca.
+ * Re-lê comprador (cota fresca) quando REQUIRE_COMPRADOR=1.
+ * @param {AuthContext|null|undefined} auth
+ */
+export async function assertCanSearch(auth) {
   if (authModeRequiresCredential() && (!auth?.authenticated || !auth.userId)) {
     throw AppError.unauthorized(
       "Busca requer autenticação. Crie conta (register-buyer), faça login (login-buyer) ou envie Bearer/X-Api-Key.",
     );
   }
   if (!requireComprador()) return;
+
   if (!auth?.authenticated || !auth.userId) {
     throw AppError.unauthorized(
       "Busca requer autenticação. Crie uma conta/chave no X-Ray ou envie Bearer/X-Api-Key.",
     );
   }
-  if (!auth.roles?.includes("comprador") || !auth.comprador) {
+
+  // Cota fresca no hot path (não confiar só no cache de AuthContext)
+  let comprador = auth.comprador;
+  let roles = auth.roles || [];
+  try {
+    const row = await getCompradorById(auth.userId);
+    if (row) {
+      comprador = mapComprador(row);
+      roles = Array.from(new Set([...roles, "comprador"]));
+      auth.comprador = comprador;
+      auth.roles = roles;
+    }
+  } catch (e) {
+    console.error("[auth] assertCanSearch comprador refresh failed:", e.message);
+  }
+
+  if (!roles.includes("comprador") || !comprador) {
     throw AppError.forbidden(
       "Perfil de comprador obrigatório. Complete o cadastro (register_buyer) ou login_buyer antes de buscar.",
     );
   }
-  const { buscasRealizadas, limiteBuscas } = auth.comprador;
+  const { buscasRealizadas, limiteBuscas } = comprador;
   if (limiteBuscas != null && buscasRealizadas >= limiteBuscas) {
     throw AppError.forbidden(
       `Cota de buscas esgotada (${buscasRealizadas}/${limiteBuscas}).`,
     );
   }
+}
+
+/** Alias compartilhado REST + MCP. */
+export async function authorizeSearch(auth) {
+  return assertCanSearch(auth);
 }
 
 export function publicAuthView(auth) {

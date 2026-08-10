@@ -93,7 +93,7 @@ process.env.QDRANT_DIMENSION_KEYS =
   }
   const { assertCanSearch } = await import("../src/auth/resolveAuth.js");
   try {
-    assertCanSearch(anon);
+    await assertCanSearch(anon);
     assert.fail("assertCanSearch should block anonymous when AUTH_MODE=api_key");
   } catch (e) {
     assert.ok(e instanceof AppError);
@@ -103,6 +103,80 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(ok.authenticated, true);
   console.log("OK auth api_key");
   process.env.AUTH_MODE = "off";
+}
+
+{
+  const { hashAuthToken } = await import("../src/auth/resolveAuth.js");
+  const prefix = "xxxxxxxxxxxxxxxxxxxxxxxx";
+  const t1 = `${prefix}_user_A_secret`;
+  const t2 = `${prefix}_user_B_secret`;
+  assert.equal(t1.slice(0, 24), t2.slice(0, 24));
+  assert.notEqual(hashAuthToken(t1), hashAuthToken(t2));
+  console.log("OK jwt cache key uses full sha256 (no prefix collision)");
+}
+
+{
+  const { runWithAuth, getRequestAuth } = await import("../src/auth/authContext.js");
+  const authA = { userId: "user-a", authenticated: true };
+  const authB = { userId: "user-b", authenticated: true };
+  const results = await Promise.all([
+    runWithAuth(authA, async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      return getRequestAuth()?.userId;
+    }),
+    runWithAuth(authB, async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      return getRequestAuth()?.userId;
+    }),
+  ]);
+  assert.deepEqual(results.sort(), ["user-a", "user-b"].sort());
+  assert.equal(getRequestAuth(), undefined);
+  console.log("OK AsyncLocalStorage isolates MCP auth contexts");
+}
+
+{
+  const prevSkip = process.env.SKIP_ENV_VALIDATION;
+  const prevNode = process.env.NODE_ENV;
+  const prevAuth = process.env.AUTH_MODE;
+  const prevRailway = process.env.RAILWAY_ENVIRONMENT;
+  delete process.env.SKIP_ENV_VALIDATION;
+  process.env.NODE_ENV = "production";
+  process.env.AUTH_MODE = "off";
+  delete process.env.RAILWAY_ENVIRONMENT;
+  const { validateEnv, isProductionRuntime } = await import("../src/config/env.js");
+  assert.equal(isProductionRuntime(), true);
+  try {
+    validateEnv({ soft: false });
+    assert.fail("production with AUTH_MODE=off should throw");
+  } catch (e) {
+    assert.equal(e.code, "ENV_AUTH_FAIL_CLOSED");
+  }
+  process.env.NODE_ENV = prevNode || "development";
+  process.env.AUTH_MODE = prevAuth || "off";
+  if (prevSkip != null) process.env.SKIP_ENV_VALIDATION = prevSkip;
+  else process.env.SKIP_ENV_VALIDATION = "1";
+  if (prevRailway != null) process.env.RAILWAY_ENVIRONMENT = prevRailway;
+  else delete process.env.RAILWAY_ENVIRONMENT;
+  console.log("OK production fail-closed AUTH_MODE");
+}
+
+{
+  const prevNode = process.env.NODE_ENV;
+  const prevXray = process.env.XRAY_ENABLED;
+  const prevRailway = process.env.RAILWAY_ENVIRONMENT;
+  process.env.NODE_ENV = "production";
+  delete process.env.XRAY_ENABLED;
+  delete process.env.RAILWAY_ENVIRONMENT;
+  const { isXrayEnabled } = await import("../src/config/features.js");
+  assert.equal(isXrayEnabled(), false);
+  process.env.XRAY_ENABLED = "1";
+  assert.equal(isXrayEnabled(), true);
+  process.env.NODE_ENV = prevNode || "development";
+  if (prevXray != null) process.env.XRAY_ENABLED = prevXray;
+  else delete process.env.XRAY_ENABLED;
+  if (prevRailway != null) process.env.RAILWAY_ENVIRONMENT = prevRailway;
+  else delete process.env.RAILWAY_ENVIRONMENT;
+  console.log("OK X-Ray defaults off in production");
 }
 
 {

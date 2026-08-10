@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { searchTextInputShape } from "../schemas/searchText.js";
 import { createSearchId } from "../middleware/auth.js";
+import { assertCanSearch } from "../auth/resolveAuth.js";
 import { maybeEnqueueFromSearch } from "../telemetry/enqueue.js";
 import {
   listConversas,
@@ -64,13 +65,15 @@ export function createMcpServer(deps) {
     async (args) => {
       const searchId = createSearchId();
       try {
+        const auth = typeof getAuth === "function" ? getAuth() : null;
+        await assertCanSearch(auth);
+
         const result = await executeSearchByText(args || {}, {
           debug: args?.debug === true,
           rerank: args?.rerank === true,
           searchId,
         });
 
-        const auth = typeof getAuth === "function" ? getAuth() : null;
         maybeEnqueueFromSearch({
           auth,
           searchPayload: result,

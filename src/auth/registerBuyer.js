@@ -307,5 +307,7 @@ export async function revokeUserApiKey(userId, keyPrefix) {
   if (!keyPrefix) throw AppError.badRequest("key_prefix obrigatório");
   const row = await revokeApiKey({ userId, keyPrefix });
   if (!row) throw AppError.badRequest("Chave não encontrada ou já revogada");
-  return { revoked: true, key_prefix: row.key_prefix };
+  const { invalidateAuthCacheForApiKeyId } = await import("./resolveAuth.js");
+  invalidateAuthCacheForApiKeyId(row.id);
+  return { revoked: true, key_prefix: row.key_prefix, id: row.id };
 }

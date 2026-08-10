@@ -4,20 +4,31 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createMcpServer } from "./createMcpServer.js";
 import { resolveAuthContext } from "../middleware/auth.js";
 import { getAuthModes } from "../config/env.js";
+import { getRequestAuth, runWithAuth } from "../auth/authContext.js";
+import { createRateLimiter } from "../middleware/rateLimit.js";
 import { logError, logSuccess } from "../logger.js";
 
 /**
  * Monta MCP Streamable HTTP em /mcp (POST/GET/DELETE).
- * Auth alinhada ao REST via resolveAuthContext (async).
+ * Auth alinhada ao REST via resolveAuthContext (async) + AsyncLocalStorage.
  */
 export function mountMcp(app, deps) {
   const transports = Object.create(null);
-  /** Auth do request HTTP atual (tools MCP leem via getAuth). */
-  let activeAuth = null;
   const mcpDeps = {
     ...deps,
-    getAuth: () => activeAuth,
+    getAuth: () => getRequestAuth() ?? null,
   };
+
+  const mcpSearchRateLimit = createRateLimiter({
+    windowMs: 60_000,
+    max: 120,
+    message: "Too many MCP requests",
+    keyFn: (req) => {
+      const prefix = req.auth?.keyPrefix;
+      if (prefix) return `mcp:key:${prefix}`;
+      return `mcp:ip:${req.ip || req.headers["x-forwarded-for"] || "unknown"}`;
+    },
+  });
 
   const requireMcpAuth = async (req, res) => {
     try {
@@ -50,10 +61,12 @@ export function mountMcp(app, deps) {
     }
   };
 
-  const mcpPostHandler = async (req, res) => {
+  const withAuthContext = (handler) => async (req, res) => {
     if (!(await requireMcpAuth(req, res))) return;
-    activeAuth = req.auth;
+    await runWithAuth(req.auth, () => handler(req, res));
+  };
 
+  const mcpPostHandler = withAuthContext(async (req, res) => {
     const sessionId = req.headers["mcp-session-id"];
 
     try {
@@ -66,7 +79,7 @@ export function mountMcp(app, deps) {
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
             transports[sid] = transport;
-            logSuccess("MCP", "SessÃ£o inicializada", {
+            logSuccess("MCP", "Sessão inicializada", {
               session_id: sid,
               auth: req.auth?.authenticated ?? false,
             });
@@ -77,7 +90,7 @@ export function mountMcp(app, deps) {
           const sid = transport.sessionId;
           if (sid && transports[sid]) {
             delete transports[sid];
-            logSuccess("MCP", "SessÃ£o encerrada", { session_id: sid });
+            logSuccess("MCP", "Sessão encerrada", { session_id: sid });
           }
         };
 
@@ -108,10 +121,9 @@ export function mountMcp(app, deps) {
         });
       }
     }
-  };
+  });
 
-  const mcpGetHandler = async (req, res) => {
-    if (!(await requireMcpAuth(req, res))) return;
+  const mcpGetHandler = withAuthContext(async (req, res) => {
     const sessionId = req.headers["mcp-session-id"];
     if (!sessionId || !transports[sessionId]) {
       res.status(400).send("Invalid or missing session ID");
@@ -123,10 +135,9 @@ export function mountMcp(app, deps) {
       logError("MCP", "Erro no GET /mcp", error);
       if (!res.headersSent) res.status(500).send("Internal server error");
     }
-  };
+  });
 
-  const mcpDeleteHandler = async (req, res) => {
-    if (!(await requireMcpAuth(req, res))) return;
+  const mcpDeleteHandler = withAuthContext(async (req, res) => {
     const sessionId = req.headers["mcp-session-id"];
     if (!sessionId || !transports[sessionId]) {
       res.status(400).send("Invalid or missing session ID");
@@ -138,11 +149,11 @@ export function mountMcp(app, deps) {
       logError("MCP", "Erro no DELETE /mcp", error);
       if (!res.headersSent) res.status(500).send("Error processing session termination");
     }
-  };
+  });
 
-  app.post("/mcp", mcpPostHandler);
-  app.get("/mcp", mcpGetHandler);
-  app.delete("/mcp", mcpDeleteHandler);
+  app.post("/mcp", mcpSearchRateLimit, mcpPostHandler);
+  app.get("/mcp", mcpSearchRateLimit, mcpGetHandler);
+  app.delete("/mcp", mcpSearchRateLimit, mcpDeleteHandler);
 
   return {
     closeAll: async () => {

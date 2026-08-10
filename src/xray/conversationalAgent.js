@@ -198,7 +198,7 @@ Supabase configurado: ${isSupabaseConfigured() ? "sim" : "não"}. REQUIRE_COMPRA
 
 Comportamento:
 1. Guie por linguagem natural. Pode clarificar produto, região, modelo de negócio.
-2. Conta nova: peça nome + email + senha e chame register_buyer. Conta existente: peça email + senha e chame login_buyer. Mostre a API key UMA vez. No X-Ray a chave é aplicada automaticamente; diga que a sessão já está autenticada e continue (pode buscar no mesmo turno).
+2. Conta nova: peça nome + email + senha e chame register_buyer. Conta existente: peça email + senha e chame login_buyer. No X-Ray a chave é aplicada automaticamente (não peça ao usuário para copiar a key do chat). Diga que a sessão já está autenticada e continue (pode buscar no mesmo turno).
 3. Se register_buyer retornar EMAIL_EXISTS, use login_buyer.
 4. NÃO invente fornecedores. Só cite resultados de search_suppliers ou expand_search_fallback.
 5. Busque quando o briefing estiver claro. Refinamentos geram nova busca. Após register/login bem-sucedido neste turno, a auth já vale para search_suppliers.
@@ -393,11 +393,14 @@ async function executeTool(name, args, ctx) {
         user_id: out.user_id,
         email: out.email,
         comprador: out.comprador,
-        api_key: out.api_key,
-        temporary_password: out.temporary_password,
+        api_key: {
+          id: out.api_key?.id ?? null,
+          key_prefix: out.api_key?.key_prefix ?? null,
+          name: out.api_key?.name ?? null,
+        },
         auth_upgraded: true,
         next_step:
-          "Sessão autenticada neste turno. Mostre api_key.key uma vez; no X-Ray a chave é aplicada automaticamente. Pode chamar search_suppliers em seguida.",
+          "Sessão autenticada neste turno. A API key plaintext foi aplicada automaticamente no X-Ray (issued_api_key na resposta HTTP). Confirme ao usuário que está autenticado e pode buscar — não peça para copiar a key do chat.",
       };
     } catch (e) {
       return {
@@ -427,10 +430,14 @@ async function executeTool(name, args, ctx) {
         user_id: out.user_id,
         email: out.email,
         comprador: out.comprador,
-        api_key: out.api_key,
+        api_key: {
+          id: out.api_key?.id ?? null,
+          key_prefix: out.api_key?.key_prefix ?? null,
+          name: out.api_key?.name ?? null,
+        },
         auth_upgraded: true,
         next_step:
-          "Sessão autenticada neste turno. Mostre api_key.key uma vez; no X-Ray a chave é aplicada automaticamente. Pode chamar search_suppliers em seguida.",
+          "Sessão autenticada neste turno. A API key plaintext foi aplicada automaticamente no X-Ray (issued_api_key na resposta HTTP). Confirme ao usuário que está autenticado e pode buscar — não peça para copiar a key do chat.",
       };
     } catch (e) {
       return { ok: false, error: e.message || String(e), status: e.status };
@@ -460,7 +467,7 @@ async function executeTool(name, args, ctx) {
 
     if (typeof assertCanSearch === "function") {
       try {
-        assertCanSearch(auth || {});
+        await assertCanSearch(auth || {});
       } catch (e) {
         return {
           ok: false,
@@ -516,7 +523,7 @@ async function executeTool(name, args, ctx) {
   if (name === "expand_search_fallback") {
     if (typeof assertCanSearch === "function") {
       try {
-        assertCanSearch(auth || {});
+        await assertCanSearch(auth || {});
       } catch (e) {
         return {
           ok: false,

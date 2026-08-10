@@ -175,8 +175,10 @@ export function createXrayRouter() {
   });
 
 
-  router.get("/search/xray/comms/status", async (_req, res, next) => {
+  router.get("/search/xray/comms/status", async (req, res, next) => {
     try {
+      const auth = await resolveAuthContext(req.headers);
+      if (!auth?.authenticated) throw AppError.unauthorized();
       const snap = getCommsStatusSnapshot();
       const supabaseHost = (process.env.SUPABASE_URL || "").replace(/^https?:\/\//, "").split("/")[0] || null;
       const databaseUrl = process.env.DATABASE_URL || "";
@@ -214,6 +216,8 @@ export function createXrayRouter() {
 
   router.get("/search/xray/comms/logs", async (req, res, next) => {
     try {
+      const auth = await resolveAuthContext(req.headers);
+      if (!auth?.authenticated) throw AppError.unauthorized();
       const search_id = typeof req.query.search_id === "string" ? req.query.search_id.trim() : "";
       const limit = req.query.limit != null ? Number(req.query.limit) : 120;
       const logs = getCommsLogs({ search_id: search_id || undefined, limit });
@@ -297,7 +301,8 @@ export function createXrayRouter() {
   });
   router.get("/search/xray/telemetry/aparicoes/:cnpj", async (req, res, next) => {
     try {
-      await resolveAuthContext(req.headers);
+      const auth = await resolveAuthContext(req.headers);
+      if (!auth?.authenticated) throw AppError.unauthorized();
       const agg = await getAparicoesAgg(req.params.cnpj);
       return res.json(agg || { cnpj: req.params.cnpj, total: 0, note: "sem registro ou tabela pendente de migration" });
     } catch (err) {
@@ -460,7 +465,7 @@ export function createXrayRouter() {
       let auth = null;
       try {
         auth = await resolveAuthContext(req.headers);
-        assertCanSearch(auth);
+        await assertCanSearch(auth);
       } catch (e) {
         if (e.status === 401 || e.status === 403) throw e;
         auth = null;
@@ -515,7 +520,7 @@ export function createXrayRouter() {
       let auth = null;
       try {
         auth = await resolveAuthContext(req.headers);
-        assertCanSearch(auth);
+        await assertCanSearch(auth);
       } catch (e) {
         if (e.status === 401 || e.status === 403) throw e;
       }

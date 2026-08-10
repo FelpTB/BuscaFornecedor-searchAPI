@@ -23,6 +23,12 @@ export const LIMITS = {
   bodyJsonBytes: "2mb",
 };
 
+/** Produção = NODE_ENV=production ou deploy Railway. */
+export function isProductionRuntime() {
+  if ((process.env.NODE_ENV || "").trim().toLowerCase() === "production") return true;
+  return Boolean(process.env.RAILWAY_ENVIRONMENT?.trim());
+}
+
 /** @returns {string[]} modos: off | api_key | supabase_jwt (csv) */
 export function getAuthModes() {
   const raw = (process.env.AUTH_MODE || "off").trim().toLowerCase();
@@ -136,6 +142,16 @@ export function validateEnv({ soft = false } = {}) {
   const notifOn = !(notifMode === "off" || notifMode === "0" || notifMode === "false");
   if (notifOn && !process.env.NOTIFICACAO_API_KEY?.trim()) {
     warnings.push("NOTIFICACAO_MODE ativo sem NOTIFICACAO_API_KEY - fila de comunicacao sera ignorada");
+  }
+
+  // Fail-closed: produção não sobe com AUTH_MODE=off / ausente
+  if (isProductionRuntime() && getAuthMode() === "off") {
+    const err = new Error(
+      "AUTH_MODE=off (ou ausente) não é permitido em produção. Defina AUTH_MODE=api_key,supabase_jwt (ou equivalente) no Railway.",
+    );
+    err.code = "ENV_AUTH_FAIL_CLOSED";
+    if (!soft) throw err;
+    warnings.push(err.message);
   }
 
   if (missing.length > 0) {
