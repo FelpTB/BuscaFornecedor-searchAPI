@@ -694,6 +694,11 @@ export function getSearchXrayHtml() {
         hideTyping();
         renderThread();
         renderActions(data.actions);
+        if (data.issued_api_key) {
+          $("apiKey").value = data.issued_api_key;
+          localStorage.setItem("xray_api_key", data.issued_api_key);
+          refreshAuthStatus().catch(() => {});
+        }
         if (data.search || data.mcp_tool_call) showSearchSide(data);
       } catch (err) {
         hideTyping();

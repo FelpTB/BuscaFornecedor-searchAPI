@@ -18,6 +18,7 @@ import {
   resetSession,
   setSessionMessages,
   publicMessages,
+  sanitizeOpenAiMessages,
   _clearAllSessionsForTests,
 } from "../src/xray/chatSessions.js";
 import {
@@ -76,9 +77,21 @@ process.env.QDRANT_DIMENSION_KEYS =
 {
   process.env.AUTH_MODE = "api_key";
   process.env.AUTH_API_KEYS = "sk_test_abc";
+  // Sem credencial → anônimo (register/login/config). Gate de busca = assertCanSearch.
+  const anon = await resolveAuthContext({});
+  assert.equal(anon.authenticated, false);
+  assert.equal(anon.provider, "anonymous");
   try {
-    await resolveAuthContext({});
-    assert.fail("should throw");
+    await resolveAuthContext({}, { optional: false });
+    assert.fail("should throw when optional=false");
+  } catch (e) {
+    assert.ok(e instanceof AppError);
+    assert.equal(e.status, 401);
+  }
+  const { assertCanSearch } = await import("../src/auth/resolveAuth.js");
+  try {
+    assertCanSearch(anon);
+    assert.fail("assertCanSearch should block anonymous when AUTH_MODE=api_key");
   } catch (e) {
     assert.ok(e instanceof AppError);
     assert.equal(e.status, 401);
@@ -183,7 +196,7 @@ process.env.QDRANT_DIMENSION_KEYS =
     { posicao: 1, id: "a", score_final: 0.9, payload: { cnpj: "12.345", nome_empresa: "X", cidade: "SP", uf: "SP" } },
   ]);
   assert.equal(summary[0].nome_empresa, "X");
-  assert.equal(summary[0].cnpj, "12.345");
+  assert.equal(summary[0].cnpj, "12345");
   console.log("OK api key hash + results summary");
 }
 
@@ -207,6 +220,64 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.notEqual(fresh.id, a.id);
   assert.equal(fresh.messages.length, 0);
   console.log("OK chat sessions");
+}
+
+{
+  // Orphan tool + incomplete tool_calls must be dropped (OpenAI rejects otherwise)
+  const cleaned = sanitizeOpenAiMessages([
+    { role: "tool", tool_call_id: "orphan", content: "{}" },
+    { role: "user", content: "busca" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "tc1", function: { name: "search_suppliers", arguments: "{}" } }],
+    },
+    // missing tool response for tc1 — drop whole chain
+    { role: "user", content: "ok" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "tc2", function: { name: "get_search_config", arguments: "{}" } }],
+    },
+    { role: "tool", tool_call_id: "tc2", content: '{"ok":true}' },
+    { role: "assistant", content: "config ok" },
+  ]);
+  assert.equal(cleaned[0].role, "user");
+  assert.equal(cleaned[0].content, "busca");
+  assert.equal(cleaned[1].role, "user");
+  assert.equal(cleaned[1].content, "ok");
+  assert.equal(cleaned[2].role, "assistant");
+  assert.ok(cleaned[2].tool_calls);
+  assert.equal(cleaned[3].role, "tool");
+  assert.equal(cleaned[4].content, "config ok");
+
+  _clearAllSessionsForTests();
+  const s = getOrCreateSession("trim-test");
+  const long = [];
+  for (let i = 0; i < 30; i++) {
+    long.push({ role: "user", content: `u${i}` });
+    long.push({ role: "assistant", content: `a${i}` });
+  }
+  // Append a tool chain at the end that would be split by naive slice
+  long.push({
+    role: "assistant",
+    content: null,
+    tool_calls: [{ id: "last", function: { name: "lookup_cities", arguments: "{}" } }],
+  });
+  long.push({ role: "tool", tool_call_id: "last", content: "{}" });
+  long.push({ role: "assistant", content: "cidades ok" });
+  setSessionMessages(s, long);
+  assert.ok(s.messages.length <= 40);
+  const roles = s.messages.map((m) => m.role);
+  // No leading orphan tool; if any tool present, previous must be assistant with tool_calls
+  for (let i = 0; i < s.messages.length; i++) {
+    if (s.messages[i].role === "tool") {
+      assert.equal(s.messages[i - 1]?.role, "assistant");
+      assert.ok(Array.isArray(s.messages[i - 1].tool_calls));
+    }
+  }
+  assert.ok(roles.includes("tool") || s.messages.at(-1)?.content === "cidades ok");
+  console.log("OK chat message sanitize / trim");
 }
 
 {
@@ -359,7 +430,7 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(mapped[0].site, "https://www.acme.com.br");
   assert.equal(mapped[0].site_md, "[acme.com.br](https://www.acme.com.br)");
   assert.equal(mapped[0].perfil_url, "https://buscafornecedor.com.br/perfil/12345678");
-  assert.equal(mapped[0].perfil_md, "[Perfil ACME](https://buscafornecedor.com.br/perfil/12345678)");
+  assert.equal(mapped[0].perfil_md, "[Perfil Acme](https://buscafornecedor.com.br/perfil/12345678)");
   assert.equal(mapped[0].cnpj_basico, "12345678");
   assert.equal(localFromPayload({ uf: "al", cidade: "MACEIO" }), "AL · Maceio");
   console.log("OK result display mapping");

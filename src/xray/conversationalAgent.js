@@ -19,6 +19,7 @@ import {
   publicMessages,
 } from "./chatSessions.js";
 import { registerBuyer, loginBuyer, getProfile } from "../auth/registerBuyer.js";
+import { publicAuthView } from "../auth/resolveAuth.js";
 import { requireComprador } from "../config/env.js";
 import { isSupabaseConfigured } from "../db/supabaseAdmin.js";
 
@@ -178,7 +179,7 @@ function buildSystemPrompt(config, auth) {
     "produto, servico, descricao, publico, cliente";
   const authLine = auth?.authenticated
     ? `Usuário autenticado (provider=${auth.provider}, userId=${auth.userId || "—"}${auth.comprador ? `, cotas ${auth.comprador.buscasRealizadas}/${auth.comprador.limiteBuscas}` : ", sem perfil comprador"}).`
-    : "Usuário NÃO autenticado. Se REQUIRE_COMPRADOR estiver ativo ou ele quiser histórico: oriente cadastro (register_buyer) OU login de conta existente (login_buyer com email+senha). Peça para colar a API key no painel do X-Ray.";
+    : "Usuário NÃO autenticado. Se REQUIRE_COMPRADOR estiver ativo ou ele quiser histórico: oriente cadastro (register_buyer) OU login de conta existente (login_buyer com email+senha). Após sucesso a sessão fica autenticada automaticamente no X-Ray.";
 
   return `Você é o assistente conversacional do BuscaFornecedor (X-Ray / pré-proxy Microsoft MCP).
 
@@ -190,10 +191,10 @@ Supabase configurado: ${isSupabaseConfigured() ? "sim" : "não"}. REQUIRE_COMPRA
 
 Comportamento:
 1. Guie por linguagem natural. Pode clarificar produto, região, modelo de negócio.
-2. Conta nova: peça nome + email + senha e chame register_buyer. Conta existente: peça email + senha e chame login_buyer. Em ambos os casos mostre a API key UMA vez e diga para colar no campo "API key" do X-Ray e clicar em "Usar chave".
+2. Conta nova: peça nome + email + senha e chame register_buyer. Conta existente: peça email + senha e chame login_buyer. Mostre a API key UMA vez. No X-Ray a chave é aplicada automaticamente; diga que a sessão já está autenticada e continue (pode buscar no mesmo turno).
 3. Se register_buyer retornar EMAIL_EXISTS, use login_buyer.
 4. NÃO invente fornecedores. Só cite resultados de search_suppliers ou expand_search_fallback.
-5. Busque quando o briefing estiver claro. Refinamentos geram nova busca.
+5. Busque quando o briefing estiver claro. Refinamentos geram nova busca. Após register/login bem-sucedido neste turno, a auth já vale para search_suppliers.
 6. Após busca, resuma tops. Histórico/aparições gravam async no Supabase quando autenticado.
 7. Evite jargão interno (Query Manager, RRF, Fallback Vector) na conversa — fale em "busca mais geral / estadual / nacional".
 
@@ -296,6 +297,26 @@ function summarizeCitiesForLlm(nearby) {
   };
 }
 
+/** AuthContext a partir do retorno de register/login — vale para tools no mesmo turno. */
+function authFromBuyerResult(out) {
+  const c = out?.comprador || {};
+  return {
+    authenticated: true,
+    apiKeyId: out?.api_key?.id || null,
+    userId: out?.user_id || null,
+    orgId: null,
+    keyPrefix: out?.api_key?.key_prefix || null,
+    provider: "api_key",
+    roles: ["comprador"],
+    comprador: {
+      nome: c.nome ?? null,
+      tierBusca: c.tier_busca || "normal",
+      limiteBuscas: Number(c.limite_buscas ?? 50),
+      buscasRealizadas: Number(c.buscas_realizadas ?? 0),
+    },
+  };
+}
+
 /**
  * @param {string} name
  * @param {object} args
@@ -351,6 +372,10 @@ async function executeTool(name, args, ctx) {
         fonte: "X-Ray",
         key_name: "xray-chat",
       });
+      ctx.auth = authFromBuyerResult(out);
+      if (typeof out.api_key?.key === "string" && out.api_key.key) {
+        ctx.issuedApiKey = out.api_key.key;
+      }
       return {
         ok: true,
         user_id: out.user_id,
@@ -358,8 +383,9 @@ async function executeTool(name, args, ctx) {
         comprador: out.comprador,
         api_key: out.api_key,
         temporary_password: out.temporary_password,
+        auth_upgraded: true,
         next_step:
-          "Peça ao usuário para colar api_key.key no campo API key do X-Ray e clicar em Usar chave. Depois continue a busca.",
+          "Sessão autenticada neste turno. Mostre api_key.key uma vez; no X-Ray a chave é aplicada automaticamente. Pode chamar search_suppliers em seguida.",
       };
     } catch (e) {
       return {
@@ -380,14 +406,19 @@ async function executeTool(name, args, ctx) {
         fonte: "X-Ray",
         key_name: "xray-chat-login",
       });
+      ctx.auth = authFromBuyerResult(out);
+      if (typeof out.api_key?.key === "string" && out.api_key.key) {
+        ctx.issuedApiKey = out.api_key.key;
+      }
       return {
         ok: true,
         user_id: out.user_id,
         email: out.email,
         comprador: out.comprador,
         api_key: out.api_key,
+        auth_upgraded: true,
         next_step:
-          "Peça ao usuário para colar api_key.key no campo API key do X-Ray e clicar em Usar chave. Depois continue a busca.",
+          "Sessão autenticada neste turno. Mostre api_key.key uma vez; no X-Ray a chave é aplicada automaticamente. Pode chamar search_suppliers em seguida.",
       };
     } catch (e) {
       return { ok: false, error: e.message || String(e), status: e.status };
@@ -612,6 +643,7 @@ export async function runChatTurn({
     auth,
     assertCanSearch,
     session,
+    issuedApiKey: null,
     defaults: {
       final_limit:
         Number.isInteger(Number(final_limit)) && Number(final_limit) >= 1
@@ -641,7 +673,7 @@ export async function runChatTurn({
       });
       // Persiste na sessão imediatamente para o fallback no mesmo turno (se houver)
       setSessionLastSearch(session, bundle, bundle.search);
-      onSearchCompleted?.(bundle);
+      onSearchCompleted?.(bundle, toolCtx.auth);
     },
     onCities: (nearby) => {
       lastCities = nearby;
@@ -714,10 +746,18 @@ export async function runChatTurn({
         actions.push({ tool: "get_search_config" });
       }
       if (name === "register_buyer") {
-        actions.push({ tool: "register_buyer" });
+        actions.push({
+          tool: "register_buyer",
+          ok: result?.ok === true,
+          auth_upgraded: result?.auth_upgraded === true,
+        });
       }
       if (name === "login_buyer") {
-        actions.push({ tool: "login_buyer" });
+        actions.push({
+          tool: "login_buyer",
+          ok: result?.ok === true,
+          auth_upgraded: result?.auth_upgraded === true,
+        });
       }
       if (name === "get_my_profile") {
         actions.push({ tool: "get_my_profile" });
@@ -782,6 +822,9 @@ export async function runChatTurn({
     search: lastSearchBundle?.search ?? null,
     search_duration_ms: lastSearchBundle?.search_duration_ms ?? null,
     reasoning: lastPlan?.reasoning ?? null,
+    /** plaintext 1x — UI X-Ray aplica automaticamente; não logar */
+    issued_api_key: toolCtx.issuedApiKey || null,
+    auth: publicAuthView(toolCtx.auth),
     simulation: {
       client: "conversational-agent → microsoft-copilot-mcp-preview",
       role: "Chat B2B + Query Manager + Cities API + Fallback",

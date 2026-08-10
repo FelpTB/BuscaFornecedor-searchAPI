@@ -60,13 +60,70 @@ export function resetSession(sessionId) {
 }
 
 /**
- * Mantém só as últimas N mensagens OpenAI (user/assistant/tool).
+ * Remove cadeias tool incompletas / órfãs — evita erro OpenAI
+ * "tool message must be response to tool_calls".
+ * @param {object[]} messages
+ */
+export function sanitizeOpenAiMessages(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  const out = [];
+  let i = 0;
+  while (i < list.length) {
+    const m = list[i];
+    if (!m || typeof m !== "object") {
+      i += 1;
+      continue;
+    }
+
+    if (m.role === "tool") {
+      // órfã sem assistant.tool_calls precedente
+      i += 1;
+      continue;
+    }
+
+    if (m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+      const ids = new Set(
+        m.tool_calls.map((t) => t?.id).filter((id) => typeof id === "string" && id),
+      );
+      const tools = [];
+      let j = i + 1;
+      while (j < list.length && list[j]?.role === "tool") {
+        tools.push(list[j]);
+        j += 1;
+      }
+      const got = new Set(
+        tools.map((t) => t?.tool_call_id).filter((id) => typeof id === "string" && id),
+      );
+      const complete = ids.size > 0 && [...ids].every((id) => got.has(id));
+      if (complete) {
+        out.push(m, ...tools);
+      }
+      i = j;
+      continue;
+    }
+
+    if (m.role === "user" || m.role === "assistant") {
+      out.push(m);
+    }
+    i += 1;
+  }
+  return out;
+}
+
+/**
+ * Mantém só as últimas N mensagens OpenAI (user/assistant/tool),
+ * sem cortar no meio de uma cadeia tool_calls → tool.
  * @param {object} session
  * @param {object[]} messages
  */
 export function setSessionMessages(session, messages) {
-  const list = Array.isArray(messages) ? messages : [];
-  session.messages = list.length > MAX_MESSAGES ? list.slice(-MAX_MESSAGES) : list;
+  const sanitized = sanitizeOpenAiMessages(messages);
+  if (sanitized.length <= MAX_MESSAGES) {
+    session.messages = sanitized;
+  } else {
+    // slice pelo fim e re-sanitiza (descarta tool órfã no início da janela)
+    session.messages = sanitizeOpenAiMessages(sanitized.slice(-MAX_MESSAGES));
+  }
   session.updatedAt = now();
 }
 

@@ -326,9 +326,9 @@ export function createXrayRouter() {
         rerank: req.body?.rerank === true,
         auth,
         assertCanSearch,
-        onSearchCompleted: (bundle) => {
+        onSearchCompleted: (bundle, turnAuth) => {
           maybeEnqueueFromSearch({
-            auth,
+            auth: turnAuth || auth,
             searchPayload: bundle.search,
             requestParams: {
               ...(bundle.mcp_tool_call?.arguments || {}),
@@ -349,7 +349,8 @@ export function createXrayRouter() {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       return res.json({
         ...out,
-        auth: publicAuthView(auth),
+        // Prefer auth pós-register/login do turno; senão a do request
+        auth: out.auth || publicAuthView(auth),
       });
     } catch (err) {
       logError("POST /search/xray/chat", "Chat X-Ray falhou", err, {
