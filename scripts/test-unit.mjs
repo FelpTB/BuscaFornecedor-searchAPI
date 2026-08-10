@@ -274,10 +274,14 @@ process.env.QDRANT_DIMENSION_KEYS =
   const {
     buildConsultaParamFields,
     toCanonicalResultItems,
-    scoreToNota,
+    positionToNota,
+    applyPositionNotas,
   } = await import("../src/db/repositories/consultasRepo.js");
-  assert.equal(scoreToNota(0.622), 62);
-  assert.equal(scoreToNota(85), 85);
+  assert.equal(positionToNota(0, 1), 100);
+  assert.equal(positionToNota(0, 5), 100);
+  assert.equal(positionToNota(4, 5), 75);
+  assert.equal(positionToNota(2, 5), 88); // 100 - 50/4 = 87.5 → 88
+  assert.equal(positionToNota(4, 5, { escopo: "nacional" }), 100);
   const fields = buildConsultaParamFields({
     query: "energia solar",
     intent: "MISTO",
@@ -291,12 +295,19 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(fields.qualidade, null);
   assert.equal(fields.parametros.raw.intent, "MISTO");
   assert.ok(fields.bm_25);
+  const withNotas = applyPositionNotas([
+    { posicao: 1, id: "99", cnpj_basico: "12345678", nome_empresa: "ACME", score_final: 0.8 },
+    { posicao: 2, id: "98", cnpj_basico: "87654321", nome_empresa: "Beta", escopo: "nacional" },
+  ]);
+  assert.equal(withNotas[0].nota, 100);
+  assert.equal(withNotas[1].nota, 100);
   const canon = toCanonicalResultItems(
-    [{ posicao: 1, id: "99", cnpj_basico: "12345678", nome_empresa: "ACME", score_final: 0.8 }],
+    withNotas,
     "11111111-1111-1111-1111-111111111111",
   );
   assert.equal(canon[0].item.razao_social, "ACME");
-  assert.equal(canon[0].item.nota, 80);
+  assert.equal(canon[0].item.nota, 100);
+  assert.equal(canon[1].item.nota, 100);
   assert.equal(canon[0].item.cnpj_basico, "12345678");
   assert.equal(canon[0].item["limite_listagens "], "10");
   console.log("OK api key hash + results summary");

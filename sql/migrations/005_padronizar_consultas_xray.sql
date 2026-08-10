@@ -206,15 +206,8 @@ BEGIN
     END IF;
 
     v_score := NULLIF(v_src->>'score_final', '')::numeric;
-    IF v_score IS NULL AND NULLIF(v_src->>'nota', '') IS NOT NULL THEN
-      v_nota := NULLIF(v_src->>'nota', '')::numeric;
-    ELSIF v_score IS NOT NULL AND v_score >= 0 AND v_score <= 1 THEN
-      v_nota := round(v_score * 100);
-    ELSIF v_score IS NOT NULL AND v_score > 1 AND v_score <= 100 THEN
-      v_nota := round(v_score);
-    ELSE
-      v_nota := NULLIF(v_src->>'nota', '')::numeric;
-    END IF;
+    -- Nota posicional (paridade n8n): 100..75 linear; nacional = 100
+    -- (v_score só informativo; não define a nota de aparição)
 
     v_nome := COALESCE(NULLIF(v_src->>'razao_social', ''), NULLIF(v_src->>'nome_empresa', ''));
     v_tel := NULLIF(v_src->>'telefone', '');
@@ -264,6 +257,21 @@ BEGIN
         IF NULLIF(COALESCE(v_src->>'cidade', v_src->>'municipio'), '') IS NULL AND v_cp.municipio IS NOT NULL THEN
           v_src := v_src || jsonb_build_object('cidade', v_cp.municipio);
         END IF;
+      END IF;
+
+      -- Nota posicional (n8n) — depois de resolver escopo nacional
+      IF lower(COALESCE(v_escopo, '')) IN ('nacional', 'national') THEN
+        v_nota := 100;
+      ELSIF jsonb_array_length(v_in) <= 1 THEN
+        v_nota := 100;
+      ELSE
+        v_nota := GREATEST(
+          75,
+          LEAST(
+            100,
+            round(100 - (25.0 * (i - 1)) / (jsonb_array_length(v_in) - 1))
+          )
+        );
       END IF;
 
       SELECT uf.plano_categoria, uf.selo_exibicao
@@ -324,6 +332,18 @@ BEGIN
       EXCEPTION WHEN OTHERS THEN
         NULL;
       END;
+    ELSE
+      IF jsonb_array_length(v_in) <= 1 THEN
+        v_nota := 100;
+      ELSE
+        v_nota := GREATEST(
+          75,
+          LEAST(
+            100,
+            round(100 - (25.0 * (i - 1)) / (jsonb_array_length(v_in) - 1))
+          )
+        );
+      END IF;
     END IF;
 
     IF NULLIF(v_src->>'uf', '') IS NOT NULL THEN

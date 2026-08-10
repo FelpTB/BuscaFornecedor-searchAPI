@@ -10,7 +10,7 @@
  * Contrato canônico (front):
  *   parametros: { descricao, tipo_busca, cidade_origem, raio_km, ufs_selecionadas,
  *                 cnpjs_existentes, modelo_negocio?, raw? }
- *   resultados[]: { item: { razao_social, cnpj_basico, nota (0-100), telefone, email,
+ *   resultados[]: { item: { razao_social, cnpj_basico, nota (75-100 posicional n8n), telefone, email,
  *                 site, escopo, plano_categoria, fornecedor_id, consulta_id,
  *                 n_listagens, "limite_listagens ", modelo_negocio? } }
  *   qualidade: só avaliação do comprador (Ótimo/Bom/Ruim/Péssimo) — nunca intent
@@ -143,7 +143,32 @@ export function summarizeResultsForStorage(results = []) {
   });
 }
 
-/** Converte score_final (0–1 ou 0–100) em nota inteira 0–100 (contrato front). */
+/**
+ * Nota de exibição / aparição (paridade n8n):
+ *   total<=1 → 100
+ *   senão → round(100 - 25*index/(total-1)) clamp [75,100]
+ *   escopo nacional → sempre 100
+ * @param {number} index 0-based
+ * @param {number} total
+ * @param {{ nacional?: boolean, escopo?: string|null }} [opts]
+ */
+export function positionToNota(index, total, opts = {}) {
+  const escopo = String(opts.escopo || "").toLowerCase();
+  const nacional =
+    opts.nacional === true ||
+    escopo === "nacional" ||
+    escopo === "national";
+  if (nacional) return 100;
+  const n = Number(total);
+  const i = Number(index);
+  if (!Number.isFinite(n) || n <= 1) return 100;
+  if (!Number.isFinite(i) || i < 0) return 100;
+  let nota = 100 - (25 * i) / (n - 1);
+  nota = Math.round(nota);
+  return Math.max(75, Math.min(100, nota));
+}
+
+/** @deprecated Preferir positionToNota (contrato n8n/aparições). */
 export function scoreToNota(scoreFinal) {
   const s = Number(scoreFinal);
   if (!Number.isFinite(s)) return null;
@@ -158,17 +183,22 @@ export function scoreToNota(scoreFinal) {
  * @param {string|null} consultaId
  */
 export function toCanonicalResultItems(rows = [], consultaId = null) {
-  return (Array.isArray(rows) ? rows : []).map((row, index) => {
+  const list = Array.isArray(rows) ? rows : [];
+  const total = list.length;
+  return list.map((row, index) => {
     const basico = row.cnpj_basico
       ? digitsOnly(row.cnpj_basico).slice(0, 8)
       : row.cnpj
         ? digitsOnly(row.cnpj).slice(0, 8)
         : null;
-    const nota = scoreToNota(row.score_final);
+    const nota =
+      row.nota != null && Number.isFinite(Number(row.nota))
+        ? Math.round(Number(row.nota))
+        : positionToNota(index, total, { escopo: row.escopo });
     const item = {
       razao_social: row.nome_empresa || row.razao_social || null,
       cnpj_basico: basico,
-      nota: nota != null ? nota : null,
+      nota,
       telefone: row.telefone || null,
       email: row.email || null,
       site: row.site || null,
@@ -191,6 +221,16 @@ export function toCanonicalResultItems(rows = [], consultaId = null) {
     };
     return { item };
   });
+}
+
+/** Atribui `nota` posicional (n8n) em cada row flattenada. */
+export function applyPositionNotas(rows = []) {
+  const list = Array.isArray(rows) ? rows : [];
+  const total = list.length;
+  return list.map((row, index) => ({
+    ...row,
+    nota: positionToNota(index, total, { escopo: row.escopo }),
+  }));
 }
 
 /** Monta params canônicos (front) + colunas densas; preserva payload do motor em `raw`. */
@@ -496,13 +536,10 @@ async function resolveEstabelecimentoParts(client, basico, ordem, dv) {
 }
 
 function aparicaoNotaFromRow(row) {
-  const n = scoreToNota(row.score_final);
-  if (n != null) return n;
-  // legado: se já veio nota no item
   if (row.nota != null && Number.isFinite(Number(row.nota))) {
     return Math.round(Number(row.nota));
   }
-  return 0;
+  return 100;
 }
 
 /**
@@ -570,6 +607,7 @@ async function persistWithPg(pool, event) {
       event.results?.length ? event.results : event.results_summary || [],
     );
     results = await enrichFromCompanyProfile(pool, results);
+    results = applyPositionNotas(results);
 
     const fields = buildConsultaParamFields(event.params || {});
     const status =
@@ -762,6 +800,7 @@ async function persistWithSupabaseJs(event) {
     event.results?.length ? event.results : event.results_summary || [],
   );
   if (pool) results = await enrichFromCompanyProfile(pool, results);
+  results = applyPositionNotas(results);
 
   const fields = buildConsultaParamFields(event.params || {});
   const status =
