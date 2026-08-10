@@ -373,7 +373,9 @@ export function createXrayRouter() {
     if (typeof req.body?.city_name === "string" && req.body.city_name.trim()) {
       geo.city_name = req.body.city_name.trim();
     }
-    if (typeof req.body?.uf === "string" && req.body.uf.trim()) geo.uf = req.body.uf.trim();
+    if (req.body?.uf != null && req.body.uf !== "") {
+      geo.uf = req.body.uf;
+    }
     if (req.body?.radius_km != null && req.body.radius_km !== "") {
       geo.radius_km = Number(req.body.radius_km);
     }

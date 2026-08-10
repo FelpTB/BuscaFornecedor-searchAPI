@@ -5,7 +5,7 @@
 
 import OpenAI from "openai";
 import { fetchCitiesNearby } from "../clients/citiesApi.js";
-import { planSearchToolCall } from "./searchAgent.js";
+import { planSearchToolCall, normalizeUfList, formatUfFilterValue } from "./searchAgent.js";
 import { runFallbackCascade } from "../search/fallbackSearch.js";
 import {
   mapResultsForDisplay,
@@ -124,13 +124,20 @@ export const CHAT_TOOLS = [
     function: {
       name: "search_suppliers",
       description:
-        "Executa a busca de fornecedores via Query Manager. Requer perfil comprador quando REQUIRE_COMPRADOR=1. NÃO invente resultados.",
+        "Executa a busca de fornecedores via Query Manager. Geo: use city_name(+uf/radius_km) para raio municipal; use só uf (sem city_name) para filtro estadual — 'SP' ou 'SP,RJ,MG' (OR). Requer perfil comprador quando REQUIRE_COMPRADOR=1. NÃO invente resultados.",
       parameters: {
         type: "object",
         properties: {
           briefing: { type: "string" },
-          city_name: { type: "string" },
-          uf: { type: "string" },
+          city_name: {
+            type: "string",
+            description: "Cidade centro para raio (API cidades). Omita em busca só por UF.",
+          },
+          uf: {
+            type: "string",
+            description:
+              "UF(s): 'SP' ou 'SP,RJ,MG' (OR no Qdrant). Sem city_name = filtro estadual. Com city_name = desambigua a API de cidades.",
+          },
           radius_km: { type: "number" },
           final_limit: { type: "integer" },
           debug: { type: "boolean" },
@@ -195,8 +202,11 @@ Comportamento:
 3. Se register_buyer retornar EMAIL_EXISTS, use login_buyer.
 4. NÃO invente fornecedores. Só cite resultados de search_suppliers ou expand_search_fallback.
 5. Busque quando o briefing estiver claro. Refinamentos geram nova busca. Após register/login bem-sucedido neste turno, a auth já vale para search_suppliers.
-6. Após busca, resuma tops. Histórico/aparições gravam async no Supabase quando autenticado.
-7. Evite jargão interno (Query Manager, RRF, Fallback Vector) na conversa — fale em "busca mais geral / estadual / nacional".
+6. GEO na tool search_suppliers:
+   - Pediu cidade/raio → city_name (+ uf se souber) + radius_km.
+   - Pediu estado(s)/UF sem cidade → passe uf="SP" ou uf="SP,RJ,MG" e NÃO passe city_name (filtro Qdrant por UF).
+7. Após busca, resuma tops. Histórico/aparições gravam async no Supabase quando autenticado.
+8. Evite jargão interno (Query Manager, RRF, Fallback Vector) na conversa — fale em "busca mais geral / estadual / nacional".
 
 Fallback (busca mais geral) — regra obrigatória:
 - Se search_suppliers retornar result_count < requested_limit (suggest_broader_search=true), AO FINAL PERGUNTE se deseja busca mais geral. NÃO chame expand_search_fallback nesse mesmo turno.
@@ -233,6 +243,8 @@ function summarizeSearchForLlm(plan, search) {
       ? {
           city_name: plan.geo.city_name,
           uf: plan.geo.uf,
+          ufs: plan.geo.ufs || null,
+          scope: plan.geo.scope || null,
           radius_km: plan.geo.radius_km,
           cities_in_filter: plan.geo.cities_in_filter,
           truncated: plan.geo.truncated,
@@ -462,11 +474,17 @@ async function executeTool(name, args, ctx) {
     const geo = {};
     if (typeof args.city_name === "string" && args.city_name.trim()) {
       geo.city_name = args.city_name.trim();
-      if (typeof args.uf === "string" && args.uf.trim()) geo.uf = args.uf.trim();
       geo.radius_km =
         args.radius_km != null && args.radius_km !== ""
           ? Number(args.radius_km)
           : 50;
+    }
+
+    // UF: string "SP" | "SP,RJ" | array — funciona COM ou SEM cidade
+    const ufs = normalizeUfList(args.uf);
+    if (ufs.length) {
+      geo.uf = formatUfFilterValue(ufs);
+      if (ufs.length > 1) geo.ufs = ufs;
     }
 
     const final_limit =
@@ -668,6 +686,9 @@ export async function runChatTurn({
               city: bundle.geo.city_name,
               cities: bundle.geo.cities_in_filter,
               radius_km: bundle.geo.radius_km,
+              uf: bundle.geo.uf,
+              ufs: bundle.geo.ufs || null,
+              scope: bundle.geo.scope || null,
             }
           : null,
       });

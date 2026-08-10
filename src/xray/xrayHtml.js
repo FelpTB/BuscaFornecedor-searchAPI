@@ -615,6 +615,9 @@ export function getSearchXrayHtml() {
         (data.geo?.cities_in_filter != null
           ? '<span class="badge ok">cidades ' + esc(data.geo.cities_in_filter) + '</span>'
           : '') +
+        (data.geo?.scope === "uf" || (data.geo?.uf && !data.geo?.city_name)
+          ? '<span class="badge ok">UF ' + esc(Array.isArray(data.geo.uf) ? data.geo.uf.join(",") : data.geo.uf) + '</span>'
+          : '') +
         (data.model ? '<span class="badge">' + esc(data.model) + '</span>' : '') +
         (data.duration_ms != null ? '<span class="badge">turn ' + esc(data.duration_ms) + ' ms</span>' : '') +
         (data.search?.search_id

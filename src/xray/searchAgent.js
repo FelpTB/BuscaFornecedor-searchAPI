@@ -17,6 +17,39 @@ const MODELO_NEGOCIO_ALLOWED = [
   "Prestador de Serviço",
 ];
 
+/** Nomes de estado (pt-BR) → sigla UF. */
+const UF_BY_NAME = {
+  acre: "AC",
+  alagoas: "AL",
+  amapa: "AP",
+  amazonas: "AM",
+  bahia: "BA",
+  ceara: "CE",
+  "distrito federal": "DF",
+  "espirito santo": "ES",
+  goias: "GO",
+  maranhao: "MA",
+  "mato grosso": "MT",
+  "mato grosso do sul": "MS",
+  "minas gerais": "MG",
+  para: "PA",
+  paraiba: "PB",
+  parana: "PR",
+  pernambuco: "PE",
+  piaui: "PI",
+  "rio de janeiro": "RJ",
+  "rio grande do norte": "RN",
+  "rio grande do sul": "RS",
+  rondonia: "RO",
+  roraima: "RR",
+  "santa catarina": "SC",
+  "sao paulo": "SP",
+  sergipe: "SE",
+  tocantins: "TO",
+};
+
+const UF_CODES = new Set(Object.values(UF_BY_NAME));
+
 /** Pesos fixos do Query Manager (soma = 1.0). */
 export const QM_FIXED = {
   bm25: 0.2,
@@ -25,6 +58,68 @@ export const QM_FIXED = {
   cliente: 0.02,
   nucleo: 0.6,
 };
+
+/**
+ * Normaliza UF(s) para siglas de 2 letras.
+ * Aceita: "SP", "SP,RJ", "SP RJ", "Minas Gerais", ["SP","RJ"], "sp e rj".
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+export function normalizeUfList(raw) {
+  if (raw == null || raw === "") return [];
+
+  const parts = [];
+  const pushToken = (t) => {
+    if (typeof t !== "string") return;
+    const s = t
+      .trim()
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "")
+      .replace(/\s+/g, " ");
+    if (!s) return;
+    parts.push(s);
+  };
+
+  if (Array.isArray(raw)) {
+    for (const item of raw) pushToken(String(item));
+  } else if (typeof raw === "string") {
+    const split = raw
+      .split(/[,;/|]+|\s+e\s+|\s+ou\s+/i)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (split.length > 1) {
+      for (const s of split) pushToken(s);
+    } else {
+      pushToken(raw);
+    }
+  } else {
+    return [];
+  }
+
+  const out = [];
+  const seen = new Set();
+  for (const part of parts) {
+    const upper = part.toUpperCase();
+    let code = null;
+    if (/^[A-Z]{2}$/.test(upper) && UF_CODES.has(upper)) {
+      code = upper;
+    } else {
+      const key = part.toLowerCase();
+      code = UF_BY_NAME[key] || null;
+    }
+    if (code && !seen.has(code)) {
+      seen.add(code);
+      out.push(code);
+    }
+  }
+  return out;
+}
+
+/** Formata lista de UFs para filter Qdrant (escalar ou array OR). */
+export function formatUfFilterValue(ufs) {
+  if (!Array.isArray(ufs) || ufs.length === 0) return null;
+  return ufs.length === 1 ? ufs[0] : ufs;
+}
 
 export const QM_NUCLEO = {
   PRODUTO: { produto: 0.45, servico: 0.15 },
@@ -176,12 +271,16 @@ DIRETRIZES DE CONTEÚDO (ANTI-ERRO)
 
 5) Modelo_Negocio: EXATAMENTE um de ${JSON.stringify(MODELO_NEGOCIO_ALLOWED)}.
 
-6) GEO / RAIO (regional):
-   - Se o usuário mencionar cidade e/ou raio (ex.: "em Campinas", "raio 50km", "região de Curitiba/PR"), preencha:
-     cidade_centro, uf (se souber), radius_km (número; default 50 se houver cidade sem raio).
-   - Se NÃO houver indicação geográfica, cidade_centro/uf/radius_km = null.
-   - O servidor chamará a API de cidades e montará filter.cidade = [lista de nomes no raio].
-   - NÃO invente a lista de cidades vizinhas — só o centro + raio.
+6) GEO — cidade (raio) OU UF estadual:
+   a) CIDADE / RAIO (ex.: "em Campinas", "raio 50km", "região de Curitiba/PR"):
+      - Preencha cidade_centro, uf (se souber), radius_km (default 50 se houver cidade sem raio).
+      - O servidor chama API de cidades → filter.cidade = lista no raio.
+   b) SÓ ESTADO / UF (ex.: "em SP", "no Paraná", "RJ e MG", "sudeste de SP e RJ"):
+      - cidade_centro = null, radius_km = null.
+      - uf = sigla(s) de 2 letras. Uma: "SP". Várias (OR): "SP,RJ,MG".
+      - O servidor aplica filter.uf no Qdrant (sem expandir cidades).
+   c) Sem indicação geográfica: cidade_centro/uf/radius_km = null.
+   - NÃO invente lista de cidades vizinhas — só o centro + raio quando houver cidade.
 
 7) PROIBIDO explicar fora do JSON. Retorne APENAS JSON.
 
@@ -198,7 +297,7 @@ SCHEMA DE SAÍDA
   "bm25": "APENAS termos discriminantes (sem genérico compartilhado)",
   "Modelo_Negocio": "um dos valores permitidos",
   "cidade_centro": "string|null",
-  "uf": "UF 2 letras|null",
+  "uf": "sigla UF ou lista CSV (ex. SP ou SP,RJ)|null",
   "radius_km": "number|null",
   "rerank": false,
   "debug": false
@@ -209,7 +308,7 @@ SCHEMA DE SAÍDA
  * Converte saída do Query Manager → arguments da tool search_text.
  * @param {object} qm
  * @param {object} config
- * @param {{ userQuery?: string, final_limit?: number, debug?: boolean, rerank?: boolean, cityNames?: string[]|null, geoMeta?: object|null }} [options]
+ * @param {{ userQuery?: string, final_limit?: number, debug?: boolean, rerank?: boolean, cityNames?: string[]|null, geoMeta?: object|null, ufs?: string[]|null }} [options]
  */
 export function mapQueryManagerToToolArgs(qm, config, options = {}) {
   const dimMap = resolveDimMap(config.dimension_keys);
@@ -238,15 +337,20 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
   const modelo = pickModeloNegocio(qm.Modelo_Negocio ?? qm.modelo_negocio);
   if (modelo) filter.modelo_negocio = modelo;
 
-  // Lista regional tem prioridade sobre cidade/uf unitários
+  // Lista regional (cidade+raio) tem prioridade sobre filtro UF puro
   const cityNames = Array.isArray(options.cityNames)
     ? options.cityNames.filter((n) => typeof n === "string" && n.trim())
     : null;
 
+  const ufsFromOptions = normalizeUfList(options.ufs);
+  const ufsFromQm = normalizeUfList(qm.ufs ?? qm.uf);
+  const ufs = ufsFromOptions.length ? ufsFromOptions : ufsFromQm;
+  const ufFilter = formatUfFilterValue(ufs);
+
   if (cityNames && cityNames.length > 0) {
     filter.cidade = cityNames.length === 1 ? cityNames[0] : cityNames;
   } else {
-    if (typeof qm.uf === "string" && qm.uf.trim()) filter.uf = qm.uf.trim().toUpperCase();
+    if (ufFilter != null) filter.uf = ufFilter;
     const singleCity =
       (typeof qm.cidade_centro === "string" && qm.cidade_centro.trim()) ||
       (typeof qm.cidade === "string" && qm.cidade.trim()) ||
@@ -292,7 +396,8 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
       bm25: qm.bm25 ?? null,
       Modelo_Negocio: modelo,
       cidade_centro: qm.cidade_centro ?? qm.cidade ?? null,
-      uf: qm.uf ?? null,
+      uf: ufFilter,
+      ufs,
       radius_km: qm.radius_km ?? null,
       peso_produtos: weights[dimMap.produto],
       peso_servicos: weights[dimMap.servico],
@@ -306,7 +411,8 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
 }
 
 /**
- * Resolve geo: UI explícita tem prioridade; senão campos do QM.
+ * Resolve geo de cidade+raio: UI explícita tem prioridade; senão campos do QM.
+ * UF-only (sem cidade) → retorna null; use resolveUfFilter.
  * @returns {{ city_name: string, uf: string|null, radius_km: number }|null}
  */
 export function resolveGeoRequest(qm = {}, geoFromUi = {}) {
@@ -320,11 +426,8 @@ export function resolveGeoRequest(qm = {}, geoFromUi = {}) {
   const city_name = uiName || qmName;
   if (!city_name) return null;
 
-  const ufRaw =
-    (typeof geoFromUi.uf === "string" && geoFromUi.uf.trim()) ||
-    (typeof qm.uf === "string" && qm.uf.trim()) ||
-    "";
-  const uf = ufRaw ? ufRaw.toUpperCase() : null;
+  const ufs = normalizeUfList(geoFromUi.uf ?? geoFromUi.ufs ?? qm.ufs ?? qm.uf);
+  const uf = ufs.length ? ufs[0] : null;
 
   let radius_km =
     geoFromUi.radius_km != null && geoFromUi.radius_km !== ""
@@ -339,10 +442,21 @@ export function resolveGeoRequest(qm = {}, geoFromUi = {}) {
 }
 
 /**
+ * Resolve filtro estadual (UF) quando não há cidade.
+ * UI/agente explícito tem prioridade sobre o QM.
+ * @returns {string[]}
+ */
+export function resolveUfFilter(qm = {}, geoFromUi = {}) {
+  const fromUi = normalizeUfList(geoFromUi.uf ?? geoFromUi.ufs);
+  if (fromUi.length) return fromUi;
+  return normalizeUfList(qm.ufs ?? qm.uf);
+}
+
+/**
  * Planeja via Query Manager e monta tool call MCP search_text.
  * @param {string} userQuery
  * @param {object} config
- * @param {{ final_limit?: number, debug?: boolean, rerank?: boolean, geo?: { city_name?: string, uf?: string, radius_km?: number } }} [options]
+ * @param {{ final_limit?: number, debug?: boolean, rerank?: boolean, geo?: { city_name?: string, uf?: string|string[], ufs?: string[], radius_km?: number } }} [options]
  */
 export async function planSearchToolCall(userQuery, config, options = {}) {
   const query = typeof userQuery === "string" ? userQuery.trim() : "";
@@ -380,10 +494,17 @@ export async function planSearchToolCall(userQuery, config, options = {}) {
     throw err;
   }
 
-  // Geo: UI explícita ou extraído pelo QM → API cidades → lista para filter.cidade
+  const geoFromUi = options.geo && typeof options.geo === "object" ? options.geo : {};
+  const ufsFromUi = normalizeUfList(geoFromUi.uf ?? geoFromUi.ufs);
+  const uiCity =
+    typeof geoFromUi.city_name === "string" ? geoFromUi.city_name.trim() : "";
+  // Agente/UI pediu só UF (sem cidade) → força filtro estadual; não expandir cidade inventada pelo QM
+  const forceUfOnly = !uiCity && ufsFromUi.length > 0;
+
+  // Geo cidade+raio → API cidades → filter.cidade
   let cityNames = null;
   let geoMeta = null;
-  const geoReq = resolveGeoRequest(qm, options.geo || {});
+  const geoReq = forceUfOnly ? null : resolveGeoRequest(qm, geoFromUi);
   if (geoReq) {
     try {
       const nearby = await fetchCitiesNearby(geoReq);
@@ -398,6 +519,7 @@ export async function planSearchToolCall(userQuery, config, options = {}) {
         center_city: nearby.center_city,
         city_names_sample: cityNames.slice(0, 15),
         cities_api: nearby.source,
+        scope: "cidade",
       };
     } catch (geoErr) {
       geoMeta = {
@@ -406,10 +528,27 @@ export async function planSearchToolCall(userQuery, config, options = {}) {
         radius_km: geoReq.radius_km,
         error: geoErr.message || String(geoErr),
         status: geoErr.status,
+        scope: "cidade",
       };
       // Fallback: filtra só a cidade centro se a API falhar
       cityNames = [geoReq.city_name];
     }
+  }
+
+  // UF-only (sem cidade): filter.uf no Qdrant — 1 ou N estados (OR)
+  const ufsExplicit = forceUfOnly
+    ? ufsFromUi
+    : resolveUfFilter(qm, geoFromUi);
+  if (!cityNames?.length && ufsExplicit.length) {
+    const ufFilter = formatUfFilterValue(ufsExplicit);
+    geoMeta = {
+      city_name: null,
+      uf: ufFilter,
+      ufs: ufsExplicit,
+      radius_km: null,
+      cities_in_filter: 0,
+      scope: "uf",
+    };
   }
 
   const mapped = mapQueryManagerToToolArgs(qm, config, {
@@ -417,12 +556,15 @@ export async function planSearchToolCall(userQuery, config, options = {}) {
     userQuery: query,
     cityNames,
     geoMeta,
+    ufs: !cityNames?.length && ufsExplicit.length ? ufsExplicit : undefined,
   });
 
   const geoNote = geoMeta
     ? geoMeta.error
       ? ` · geo falhou (${geoMeta.error}); filtro só "${geoMeta.city_name}"`
-      : ` · regional ${geoMeta.city_name}${geoMeta.uf ? "/" + geoMeta.uf : ""} ${geoMeta.radius_km}km → ${geoMeta.cities_in_filter} cidades`
+      : geoMeta.scope === "uf"
+        ? ` · filtro UF ${Array.isArray(geoMeta.uf) ? geoMeta.uf.join(",") : geoMeta.uf}`
+        : ` · regional ${geoMeta.city_name}${geoMeta.uf ? "/" + geoMeta.uf : ""} ${geoMeta.radius_km}km → ${geoMeta.cities_in_filter} cidades`
     : "";
 
   return {
@@ -449,6 +591,10 @@ export async function planSearchToolCall(userQuery, config, options = {}) {
       transport: "same-process (X-Ray) → produção usará Streamable HTTP /mcp",
       weights_policy: "fixed-by-intent (PRODUTO|SERVICO|MISTO)",
       regional_filter: Boolean(cityNames?.length),
+      uf_filter: Boolean(
+        mapped.toolArguments?.filter?.uf != null &&
+          mapped.toolArguments.filter.uf !== "",
+      ),
     },
     mcp_tool_call: {
       name: "search_text",

@@ -10,6 +10,9 @@ import {
   mapQueryManagerToToolArgs,
   resolveDimMap,
   resolveGeoRequest,
+  resolveUfFilter,
+  normalizeUfList,
+  formatUfFilterValue,
   QM_FIXED,
 } from "../src/xray/searchAgent.js";
 import { CHAT_TOOLS } from "../src/xray/conversationalAgent.js";
@@ -165,6 +168,15 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(uiWins.city_name, "São Paulo");
   assert.equal(uiWins.radius_km, 50);
 
+  // UF-only: resolveGeoRequest returns null (sem cidade); resolveUfFilter aplica
+  assert.equal(resolveGeoRequest({ uf: "MG" }, {}), null);
+  assert.deepEqual(resolveUfFilter({ uf: "MG" }, {}), ["MG"]);
+  assert.deepEqual(resolveUfFilter({}, { uf: "SP,RJ" }), ["SP", "RJ"]);
+  assert.deepEqual(normalizeUfList("Minas Gerais"), ["MG"]);
+  assert.deepEqual(normalizeUfList(["sp", "rj", "MG"]), ["SP", "RJ", "MG"]);
+  assert.equal(formatUfFilterValue(["SP"]), "SP");
+  assert.deepEqual(formatUfFilterValue(["SP", "RJ"]), ["SP", "RJ"]);
+
   const regional = mapQueryManagerToToolArgs(
     { intent: "SERVICO", query_original: "limpeza", produtos: "x", servicos: "limpeza industrial", descricao: "d", publico: "p", clientes: "c", bm25: "limpeza industrial" },
     { dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"], bm25: { vector_name: "bm25" } },
@@ -172,7 +184,68 @@ process.env.QDRANT_DIMENSION_KEYS =
   );
   assert.deepEqual(regional.toolArguments.filter.cidade, ["Campinas", "Valinhos", "Sumaré"]);
   assert.equal(regional.query_manager.geo.cities_in_filter, 3);
-  console.log("OK regional city list filter");
+
+  const ufOnly = mapQueryManagerToToolArgs(
+    {
+      intent: "PRODUTO",
+      query_original: "embalagens em SP",
+      produtos: "embalagens",
+      servicos: "fornecimento",
+      descricao: "d",
+      publico: "p",
+      clientes: "c",
+      bm25: "embalagens",
+      uf: "SP",
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: "bm25" },
+    },
+  );
+  assert.equal(ufOnly.toolArguments.filter.uf, "SP");
+  assert.ok(!ufOnly.toolArguments.filter.cidade);
+
+  const multiUf = mapQueryManagerToToolArgs(
+    {
+      intent: "PRODUTO",
+      query_original: "aço RJ e MG",
+      produtos: "aço",
+      servicos: "x",
+      descricao: "d",
+      publico: "p",
+      clientes: "c",
+      bm25: "aço",
+      uf: "RJ,MG",
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: "bm25" },
+    },
+    { ufs: ["RJ", "MG"] },
+  );
+  assert.deepEqual(multiUf.toolArguments.filter.uf, ["RJ", "MG"]);
+
+  // UI/agente UF explícita vence QM
+  const uiUfWins = mapQueryManagerToToolArgs(
+    {
+      intent: "PRODUTO",
+      query_original: "x",
+      produtos: "x",
+      servicos: "x",
+      descricao: "d",
+      publico: "p",
+      clientes: "c",
+      bm25: "x",
+      uf: "BA",
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: "bm25" },
+    },
+    { ufs: ["PR", "SC"] },
+  );
+  assert.deepEqual(uiUfWins.toolArguments.filter.uf, ["PR", "SC"]);
+  console.log("OK regional city list + UF filter");
 }
 
 {
