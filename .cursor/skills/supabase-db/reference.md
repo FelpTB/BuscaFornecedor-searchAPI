@@ -30,6 +30,17 @@ Campos principais: `id`, `comprador`, `parametros` jsonb, `resultados` jsonb, `s
 
 Histórico de chat do agente (X-Ray / API / MCP). `agente_busca_conversas.id` = `session_id` do cliente. Mensagens em cascade (`ON DELETE CASCADE`). Escrita só via service role; SELECT próprio via RLS (`user_id = auth.uid()`). Migrations: `003_conversas_mensagens.sql` (create), `004_rename_agente_busca_conversas.sql` (rename legado `conversas`/`mensagens`).
 
+### Contrato canônico de `consultas` (front)
+
+Produtores `xray`/`api`/`mcp` devem gravar (ou ser normalizados para):
+
+- `parametros`: `descricao`, `tipo_busca`, `cidade_origem`, `ufs_selecionadas`, `cnpjs_existentes`, `raw` (payload do motor)
+- `resultados[]`: `{ item: { razao_social, cnpj_basico, nota (0-100), telefone, email, site, … } }`
+- `qualidade`: só avaliação (`Ótimo`/`Bom`/`Ruim`/`Péssimo`) — **nunca** intent
+- Migration `005_padronizar_consultas_xray.sql`: `normalizar_parametros_consulta`, `enriquecer_resultados_consulta`, triggers, RPC `public.registrar_consulta`
+
+Writer Node: `src/db/repositories/consultasRepo.js` (`buildConsultaParamFields`, `toCanonicalResultItems`).
+
 ### `usuario_fornecedor` / `app_admins` / `plan_rank`
 
 Ver `docs/supabase-users.md`. Busca autenticada de produto = papel **comprador**.

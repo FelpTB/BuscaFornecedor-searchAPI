@@ -2,9 +2,18 @@
  * Persistência de consultas + aparições (cold path).
  * Alinhado ao schema live abcAdvise (busca_fornecedor):
  *   - consultas.status = 'concluida' (padrão do produto)
- *   - aparicoes (cnpj_basico/ordem/dv)
+ *   - parametros/resultados no contrato canônico do front (site/whatsapp)
+ *   - aparicoes (cnpj_basico; ordem/dv null se desconhecido — evita FK estabelecimento)
  *   - contador_aparicoes (agg por CNPJ básico 8 dígitos)
  *   - usuario_comprador.buscas_realizadas (+ n_acessos)
+ *
+ * Contrato canônico (front):
+ *   parametros: { descricao, tipo_busca, cidade_origem, raio_km, ufs_selecionadas,
+ *                 cnpjs_existentes, modelo_negocio?, raw? }
+ *   resultados[]: { item: { razao_social, cnpj_basico, nota (0-100), telefone, email,
+ *                 site, escopo, plano_categoria, fornecedor_id, consulta_id,
+ *                 n_listagens, "limite_listagens ", modelo_negocio? } }
+ *   qualidade: só avaliação do comprador (Ótimo/Bom/Ruim/Péssimo) — nunca intent
  */
 
 import { getSupabaseAdmin, isSupabaseConfigured } from "../supabaseAdmin.js";
@@ -14,6 +23,7 @@ import { logWarn, logInfo } from "../../logger.js";
 const SCHEMA = "busca_fornecedor";
 const STATUS_OK = "concluida";
 const STATUS_ERR = "erro";
+const QUALIDADE_AVALIACAO = new Set(["Ótimo", "Bom", "Ruim", "Péssimo"]);
 
 function digitsOnly(cnpj) {
   return String(cnpj || "").replace(/\D/g, "");
@@ -110,17 +120,117 @@ export function summarizeResultsForStorage(results = []) {
         nested.modelo_negocio,
         r.modelo_negocio,
       ),
-      score_final: r.score_final ?? null,
+      score_final:
+        r.score_final ?? (nested.nota != null ? Number(nested.nota) / 100 : null),
       score_rrf: r.score_rrf ?? null,
+      telefone: firstNonEmpty(payloadGet(p, "telefone"), nested.telefone, r.telefone),
+      email: firstNonEmpty(payloadGet(p, "email"), nested.email, r.email),
+      site: firstNonEmpty(payloadGet(p, "site", "url_site"), nested.site, r.site),
+      instagram: firstNonEmpty(payloadGet(p, "instagram"), nested.instagram, r.instagram),
+      escopo: firstNonEmpty(payloadGet(p, "escopo"), nested.escopo, r.escopo),
+      plano_categoria: firstNonEmpty(
+        payloadGet(p, "plano_categoria"),
+        nested.plano_categoria,
+        r.plano_categoria,
+      ),
+      n_listagens: nested.n_listagens ?? r.n_listagens ?? null,
+      limite_listagens: firstNonEmpty(
+        nested["limite_listagens "],
+        nested.limite_listagens,
+        r.limite_listagens,
+      ),
     };
   });
 }
 
-/** Monta params canônicos para jsonb parametros + colunas densas. */
+/** Converte score_final (0–1 ou 0–100) em nota inteira 0–100 (contrato front). */
+export function scoreToNota(scoreFinal) {
+  const s = Number(scoreFinal);
+  if (!Number.isFinite(s)) return null;
+  if (s >= 0 && s <= 1) return Math.round(s * 100);
+  if (s > 1 && s <= 100) return Math.round(s);
+  return null;
+}
+
+/**
+ * Empacota rows flattenadas no formato canônico `{ item: {...} }` do front.
+ * @param {object[]} rows
+ * @param {string|null} consultaId
+ */
+export function toCanonicalResultItems(rows = [], consultaId = null) {
+  return (Array.isArray(rows) ? rows : []).map((row, index) => {
+    const basico = row.cnpj_basico
+      ? digitsOnly(row.cnpj_basico).slice(0, 8)
+      : row.cnpj
+        ? digitsOnly(row.cnpj).slice(0, 8)
+        : null;
+    const nota = scoreToNota(row.score_final);
+    const item = {
+      razao_social: row.nome_empresa || row.razao_social || null,
+      cnpj_basico: basico,
+      nota: nota != null ? nota : null,
+      telefone: row.telefone || null,
+      email: row.email || null,
+      site: row.site || null,
+      instagram: row.instagram || null,
+      escopo: row.escopo || null,
+      plano_categoria: row.plano_categoria ?? null,
+      fornecedor_id:
+        row.fornecedor_id != null
+          ? String(row.fornecedor_id)
+          : row.id != null
+            ? String(row.id)
+            : null,
+      consulta_id: consultaId || null,
+      n_listagens: Number.isFinite(Number(row.n_listagens)) ? Number(row.n_listagens) : 0,
+      // chave com espaço final — compat com payload histórico site/whatsapp
+      "limite_listagens ":
+        row.limite_listagens != null ? String(row.limite_listagens) : "10",
+      modelo_negocio: row.modelo_negocio || null,
+      posicao: row.posicao ?? index + 1,
+    };
+    return { item };
+  });
+}
+
+/** Monta params canônicos (front) + colunas densas; preserva payload do motor em `raw`. */
 export function buildConsultaParamFields(params = {}) {
+  const alreadyCanonical =
+    typeof params.descricao === "string" &&
+    params.descricao.trim() &&
+    !params.query &&
+    !params.queries;
+
+  if (alreadyCanonical && params.raw == null) {
+    const ufArr = toTextArray(params.ufs_selecionadas ?? params.uf);
+    const munArr = toTextArray(
+      params.cidade_origem
+        ? [params.cidade_origem]
+        : params.municipio,
+    );
+    return {
+      parametros: { ...params },
+      v_produto: null,
+      v_servico: null,
+      v_descricao: params.descricao ?? null,
+      v_publico: null,
+      v_cliente: null,
+      bm_25: params.descricao ?? null,
+      uf: ufArr,
+      municipio: Array.isArray(munArr) ? munArr.slice(0, 80) : munArr,
+      modelo_negocio: params.modelo_negocio ?? null,
+      qualidade:
+        typeof params.qualidade === "string" && QUALIDADE_AVALIACAO.has(params.qualidade)
+          ? params.qualidade
+          : null,
+    };
+  }
+
   const queries = params.queries && typeof params.queries === "object" ? params.queries : {};
   const weights = params.weights && typeof params.weights === "object" ? params.weights : {};
   const filter = params.filter && typeof params.filter === "object" ? params.filter : {};
+  const filterNot =
+    params.filter_not && typeof params.filter_not === "object" ? params.filter_not : {};
 
   const bm25Query =
     (typeof params.bm25_query === "string" && params.bm25_query.trim()) ||
@@ -131,10 +241,26 @@ export function buildConsultaParamFields(params = {}) {
   const queryText =
     (typeof params.query === "string" && params.query.trim()) ||
     (typeof params.query_text === "string" && params.query_text.trim()) ||
+    (typeof params.descricao === "string" && params.descricao.trim()) ||
     bm25Query ||
+    (typeof queries.descricao === "string" && queries.descricao.trim()) ||
     null;
 
-  const parametros = {
+  const cidades = toTextArray(filter.cidade ?? filter.municipio ?? params.municipio) || [];
+  const ufs = toTextArray(filter.uf ?? params.uf ?? params.ufs_selecionadas) || [];
+  const hasCidade = cidades.length > 0;
+  const hasUf = ufs.length > 0;
+  const tipoBusca = hasCidade ? "city" : hasUf ? "uf" : "nacional";
+
+  const cnpjsExistentes = Array.isArray(filterNot.cnpj)
+    ? filterNot.cnpj.map(String).join(",")
+    : typeof filterNot.cnpj === "string"
+      ? filterNot.cnpj
+      : typeof params.cnpjs_existentes === "string"
+        ? params.cnpjs_existentes
+        : "";
+
+  const raw = {
     query: queryText,
     queries: {
       produto: queries.produto ?? null,
@@ -163,26 +289,42 @@ export function buildConsultaParamFields(params = {}) {
     fallback: Boolean(params.fallback),
   };
 
-  const ufArr = toTextArray(filter.uf ?? params.uf);
-  const munArr = toTextArray(filter.cidade ?? filter.municipio ?? params.municipio);
+  const parametros = {
+    descricao: queryText,
+    tipo_busca: params.tipo_busca || tipoBusca,
+    cidade_origem:
+      (typeof params.cidade_origem === "string" && params.cidade_origem.trim()) ||
+      cidades[0] ||
+      null,
+    raio_km: params.raio_km ?? params.radius_km ?? null,
+    ufs_selecionadas: ufs,
+    cnpjs_existentes: cnpjsExistentes,
+    modelo_negocio: filter.modelo_negocio ?? params.modelo_negocio ?? null,
+    raw,
+  };
 
   return {
     parametros,
     v_produto: queries.produto ?? null,
     v_servico: queries.servico ?? null,
-    v_descricao: queries.descricao ?? null,
+    v_descricao: queries.descricao ?? queryText ?? null,
     v_publico: queries.publico ?? null,
     v_cliente: queries.cliente ?? null,
-    bm_25: bm25Query,
-    uf: ufArr,
-    municipio: Array.isArray(munArr) ? munArr.slice(0, 80) : munArr,
+    // site/whatsapp preenchem bm_25 com o texto de busca mesmo sem vetor BM25
+    bm_25: bm25Query || queryText || null,
+    uf: ufs.length ? ufs : null,
+    municipio: cidades.length ? cidades.slice(0, 80) : null,
     modelo_negocio: filter.modelo_negocio ?? params.modelo_negocio ?? null,
-    qualidade: params.intent ?? null,
+    // nunca gravar intent em qualidade (coluna de avaliação do comprador)
+    qualidade:
+      typeof params.qualidade === "string" && QUALIDADE_AVALIACAO.has(params.qualidade)
+        ? params.qualidade
+        : null,
   };
 }
 
 /**
- * Enriquece rows sem CNPJ/nome via company_profile (id numérico ou cnpj).
+ * Enriquece rows via company_profile (+ contato/plano quando disponível).
  * @param {import('pg').Pool|null} pool
  * @param {object[]} rows
  */
@@ -190,16 +332,29 @@ async function enrichFromCompanyProfile(pool, rows) {
   if (!pool || !rows?.length) return rows;
   const out = [];
   for (const row of rows) {
-    if (row.cnpj && row.nome_empresa && row.cidade && row.uf) {
+    const needsProfile =
+      !row.cnpj ||
+      !row.nome_empresa ||
+      !row.cidade ||
+      !row.uf ||
+      !row.telefone ||
+      !row.email ||
+      !row.site ||
+      row.escopo == null ||
+      row.plano_categoria == null ||
+      row.n_listagens == null;
+
+    if (!needsProfile) {
       out.push(row);
       continue;
     }
+
     const idNum = Number(row.id);
     let profile = null;
     try {
       if (Number.isFinite(idNum) && idNum > 0 && idNum < 2_147_483_647) {
         const r = await pool.query(
-          `SELECT cnpj, nome_empresa, municipio, uf
+          `SELECT id, cnpj, nome_empresa, municipio, uf, full_profile
            FROM busca_fornecedor.company_profile WHERE id = $1 LIMIT 1`,
           [idNum],
         );
@@ -207,16 +362,16 @@ async function enrichFromCompanyProfile(pool, rows) {
       }
       if (!profile && row.cnpj_basico) {
         const r = await pool.query(
-          `SELECT cnpj, nome_empresa, municipio, uf
+          `SELECT id, cnpj, nome_empresa, municipio, uf, full_profile
            FROM busca_fornecedor.company_profile WHERE cnpj = $1 LIMIT 1`,
-          [row.cnpj_basico],
+          [digitsOnly(row.cnpj_basico).slice(0, 8)],
         );
         profile = r.rows[0] || null;
       }
       if (!profile && row.cnpj) {
         const basico = digitsOnly(row.cnpj).slice(0, 8);
         const r = await pool.query(
-          `SELECT cnpj, nome_empresa, municipio, uf
+          `SELECT id, cnpj, nome_empresa, municipio, uf, full_profile
            FROM busca_fornecedor.company_profile WHERE cnpj = $1 LIMIT 1`,
           [basico],
         );
@@ -232,7 +387,6 @@ async function enrichFromCompanyProfile(pool, rows) {
     }
 
     const cnpjDigits = digitsOnly(profile.cnpj || row.cnpj || "");
-    // company_profile.cnpj costuma ser basico (8); se full 14, usar
     const full =
       cnpjDigits.length === 14
         ? cnpjDigits
@@ -240,16 +394,115 @@ async function enrichFromCompanyProfile(pool, rows) {
           ? digitsOnly(row.cnpj)
           : null;
 
+    const fp = profile.full_profile && typeof profile.full_profile === "object"
+      ? profile.full_profile
+      : {};
+    const contato = fp.contato && typeof fp.contato === "object" ? fp.contato : {};
+    const classificacao =
+      fp.classificacao && typeof fp.classificacao === "object" ? fp.classificacao : {};
+    const telefones = Array.isArray(contato.telefones)
+      ? contato.telefones.filter(Boolean).join(" ")
+      : null;
+    const emails = Array.isArray(contato.emails)
+      ? contato.emails.filter(Boolean).join(" ")
+      : null;
+    const cob = String(classificacao.cobertura_geografica || "").toLowerCase();
+    const escopoNacional =
+      /brasil|nacional|todo o pa[ií]s|nationwide/.test(cob) ? "nacional" : null;
+
+    let plano = null;
+    let nListagens = row.n_listagens;
+    let limite = row.limite_listagens;
+    const basico8 = (full || cnpjDigits || row.cnpj_basico || "").toString().slice(0, 8);
+    try {
+      if (basico8) {
+        const ufRow = await pool.query(
+          `SELECT plano_categoria, selo_exibicao
+           FROM busca_fornecedor.usuario_fornecedor
+           WHERE cnpj_basico = $1
+           LIMIT 1`,
+          [basico8],
+        );
+        plano = ufRow.rows[0] || null;
+        const cnt = await pool.query(
+          `SELECT n_aparicoes, limite_aparicoes
+           FROM busca_fornecedor.contador_aparicoes WHERE cnpj = $1 LIMIT 1`,
+          [basico8],
+        );
+        if (cnt.rows[0]) {
+          nListagens = Number(cnt.rows[0].n_aparicoes || 0);
+          if (limite == null && cnt.rows[0].limite_aparicoes != null) {
+            limite = String(cnt.rows[0].limite_aparicoes);
+          }
+        }
+      }
+    } catch (e) {
+      logWarn("enrich plano/contador", e.message);
+    }
+
     out.push({
       ...row,
       cnpj: full || row.cnpj,
-      cnpj_basico: (full || cnpjDigits || row.cnpj_basico || "").toString().slice(0, 8) || row.cnpj_basico,
+      cnpj_basico: basico8 || row.cnpj_basico,
       nome_empresa: row.nome_empresa || profile.nome_empresa || null,
       cidade: row.cidade || profile.municipio || null,
       uf: row.uf || profile.uf || null,
+      telefone: row.telefone || telefones || null,
+      email: row.email || emails || null,
+      site: row.site || contato.url_site || null,
+      instagram: row.instagram || contato.url_instagram || null,
+      escopo: row.escopo || escopoNacional,
+      plano_categoria: row.plano_categoria ?? plano?.plano_categoria ?? null,
+      fornecedor_id: row.fornecedor_id ?? profile.id ?? row.id,
+      n_listagens: nListagens ?? 0,
+      limite_listagens: limite ?? "10",
     });
   }
   return out;
+}
+
+/**
+ * Resolve cnpj_ordem/dv reais no estabelecimento; se não achar, null (FK MATCH SIMPLE).
+ * @param {import('pg').PoolClient|import('pg').Pool} client
+ * @param {string} basico
+ * @param {string|null|undefined} ordem
+ * @param {string|null|undefined} dv
+ */
+async function resolveEstabelecimentoParts(client, basico, ordem, dv) {
+  const b = digitsOnly(basico).slice(0, 8);
+  if (!b) return { basico: null, ordem: null, dv: null };
+  if (ordem && dv) return { basico: b, ordem: String(ordem), dv: String(dv) };
+  try {
+    const r = await client.query(
+      `SELECT cnpj_ordem, cnpj_dv
+       FROM cnpj_db.estabelecimento
+       WHERE cnpj_basico = $1
+       ORDER BY CASE WHEN cnpj_ordem = '0001' THEN 0 ELSE 1 END, cnpj_ordem
+       LIMIT 1`,
+      [b],
+    );
+    if (r.rows[0]) {
+      return {
+        basico: b,
+        ordem: r.rows[0].cnpj_ordem,
+        dv: r.rows[0].cnpj_dv,
+      };
+    }
+  } catch (e) {
+    logWarn("estabelecimento lookup", e.message);
+  }
+  // null/null: site/whatsapp fazem assim; evita FK inválida com "0001"/"00" inventados
+  return { basico: b, ordem: null, dv: null };
+}
+
+function aparicaoNotaFromRow(row) {
+  const n = scoreToNota(row.score_final);
+  if (n != null) return n;
+  // legado: se já veio nota no item
+  if (row.nota != null && Number.isFinite(Number(row.nota))) {
+    return Math.round(Number(row.nota));
+  }
+  return 0;
 }
 
 /**
@@ -324,6 +577,24 @@ async function persistWithPg(pool, event) {
         ? STATUS_ERR
         : STATUS_OK;
 
+    const canonicalResults = toCanonicalResultItems(results, event.search_id);
+
+    // Preenche uf/municipio da consulta a partir dos resultados se filtros vazios
+    const ufFromResults = [
+      ...new Set(results.map((r) => r.uf).filter((u) => typeof u === "string" && u.trim())),
+    ];
+    const munFromResults = [
+      ...new Set(
+        results.map((r) => r.cidade).filter((c) => typeof c === "string" && c.trim()),
+      ),
+    ];
+    const ufCol = fields.uf?.length ? fields.uf : ufFromResults.length ? ufFromResults : null;
+    const munCol = fields.municipio?.length
+      ? fields.municipio
+      : munFromResults.length
+        ? munFromResults.slice(0, 80)
+        : null;
+
     const insertConsulta = `
       INSERT INTO busca_fornecedor.consultas (
         id, comprador, parametros, resultados, status,
@@ -344,7 +615,7 @@ async function persistWithPg(pool, event) {
       event.search_id,
       event.user_id,
       JSON.stringify(fields.parametros),
-      JSON.stringify(results),
+      JSON.stringify(canonicalResults),
       status,
       event.session_id || null,
       event.search_id,
@@ -354,8 +625,8 @@ async function persistWithPg(pool, event) {
       fields.v_publico,
       fields.v_cliente,
       fields.bm_25,
-      fields.uf,
-      fields.municipio,
+      ufCol,
+      munCol,
       fields.modelo_negocio,
       Boolean(event.params?.fallback),
       mapOrigem(event.source),
@@ -379,17 +650,12 @@ async function persistWithPg(pool, event) {
     let contadorOk = 0;
 
     for (const row of results) {
-      const parts =
-        splitCnpjParts(row.cnpj) ||
-        (row.cnpj_basico
-          ? {
-              basico: digitsOnly(row.cnpj_basico).slice(0, 8),
-              ordem: row.cnpj_ordem || null,
-              dv: row.cnpj_dv || null,
-            }
-          : null);
+      const basico =
+        (row.cnpj_basico && digitsOnly(row.cnpj_basico).slice(0, 8)) ||
+        (row.cnpj && digitsOnly(row.cnpj).slice(0, 8)) ||
+        null;
 
-      if (!parts?.basico) {
+      if (!basico) {
         logWarn("aparicoes", "resultado sem CNPJ — skip aparicao/contador", {
           search_id: event.search_id,
           point_id: row.id,
@@ -398,8 +664,12 @@ async function persistWithPg(pool, event) {
         continue;
       }
 
-      const ordem = parts.ordem || "0001";
-      const dv = parts.dv || "00";
+      const parts = await resolveEstabelecimentoParts(
+        client,
+        basico,
+        row.cnpj_ordem,
+        row.cnpj_dv,
+      );
 
       try {
         await client.query(
@@ -411,18 +681,29 @@ async function persistWithPg(pool, event) {
             event.search_id,
             event.user_id,
             parts.basico,
-            ordem,
-            dv,
-            Math.round(Number(row.posicao) || 0),
+            parts.ordem,
+            parts.dv,
+            aparicaoNotaFromRow(row),
           ],
         );
         aparicoesOk += 1;
       } catch (e) {
-        logWarn("aparicoes", "insert skipped (FK/schema)", {
-          cnpj_basico: parts.basico,
-          message: e.message,
-          code: e.code,
-        });
+        // Fallback: tenta só com basico (ordem/dv null) — padrão site
+        try {
+          await client.query(
+            `INSERT INTO busca_fornecedor.aparicoes (
+              consulta_id, comprador_id, cnpj_basico, cnpj_ordem, cnpj_dv, nota, revelada
+            ) VALUES ($1,$2,$3,NULL,NULL,$4,false)`,
+            [event.search_id, event.user_id, basico, aparicaoNotaFromRow(row)],
+          );
+          aparicoesOk += 1;
+        } catch (e2) {
+          logWarn("aparicoes", "insert skipped (FK/schema)", {
+            cnpj_basico: basico,
+            message: e2.message || e.message,
+            code: e2.code || e.code,
+          });
+        }
       }
 
       try {
@@ -432,12 +713,12 @@ async function persistWithPg(pool, event) {
            ON CONFLICT (cnpj) DO UPDATE
            SET n_aparicoes = COALESCE(busca_fornecedor.contador_aparicoes.n_aparicoes, 0) + 1,
                updated_at = CURRENT_DATE`,
-          [parts.basico],
+          [basico],
         );
         contadorOk += 1;
       } catch (e) {
         logWarn("contador_aparicoes", "upsert failed", {
-          cnpj: parts.basico,
+          cnpj: basico,
           message: e.message,
           code: e.code,
         });
@@ -448,7 +729,7 @@ async function persistWithPg(pool, event) {
     logInfo("telemetry", "consulta persistida", {
       search_id: event.search_id,
       status,
-      resultados: results.length,
+      resultados: canonicalResults.length,
       aparicoes: aparicoesOk,
       contador: contadorOk,
     });
@@ -456,10 +737,10 @@ async function persistWithPg(pool, event) {
       ok: true,
       search_id: event.search_id,
       status,
-      resultados: results.length,
+      resultados: canonicalResults.length,
       aparicoes: aparicoesOk,
       contador: contadorOk,
-      results,
+      results: canonicalResults,
       via: "pg",
     };
   } catch (e) {
@@ -486,11 +767,22 @@ async function persistWithSupabaseJs(event) {
   const status =
     event.status === STATUS_ERR || event.status === "error" ? STATUS_ERR : STATUS_OK;
 
+  const canonicalResults = toCanonicalResultItems(results, event.search_id);
+
+  const ufFromResults = [
+    ...new Set(results.map((r) => r.uf).filter((u) => typeof u === "string" && u.trim())),
+  ];
+  const munFromResults = [
+    ...new Set(
+      results.map((r) => r.cidade).filter((c) => typeof c === "string" && c.trim()),
+    ),
+  ];
+
   const row = {
     id: event.search_id,
     comprador: event.user_id,
     parametros: fields.parametros,
-    resultados: results,
+    resultados: canonicalResults,
     status,
     session_id: event.session_id || null,
     execution_id: event.search_id,
@@ -500,8 +792,12 @@ async function persistWithSupabaseJs(event) {
     v_publico: fields.v_publico,
     v_cliente: fields.v_cliente,
     bm_25: fields.bm_25,
-    uf: fields.uf,
-    municipio: fields.municipio,
+    uf: fields.uf?.length ? fields.uf : ufFromResults.length ? ufFromResults : null,
+    municipio: fields.municipio?.length
+      ? fields.municipio
+      : munFromResults.length
+        ? munFromResults.slice(0, 80)
+        : null,
     modelo_negocio: fields.modelo_negocio,
     fallback: Boolean(event.params?.fallback),
     origem: mapOrigem(event.source),
@@ -537,35 +833,55 @@ async function persistWithSupabaseJs(event) {
   let aparicoesOk = 0;
   let contadorOk = 0;
   for (const r of results) {
-    const parts =
-      splitCnpjParts(r.cnpj) ||
-      (r.cnpj_basico
-        ? { basico: digitsOnly(r.cnpj_basico).slice(0, 8), ordem: r.cnpj_ordem, dv: r.cnpj_dv }
-        : null);
-    if (!parts?.basico) continue;
+    const basico =
+      (r.cnpj_basico && digitsOnly(r.cnpj_basico).slice(0, 8)) ||
+      (r.cnpj && digitsOnly(r.cnpj).slice(0, 8)) ||
+      null;
+    if (!basico) continue;
 
-    const ordem = parts.ordem || "0001";
-    const dv = parts.dv || "00";
+    let ordem = r.cnpj_ordem || null;
+    let dv = r.cnpj_dv || null;
+    if (pool && (!ordem || !dv)) {
+      const parts = await resolveEstabelecimentoParts(pool, basico, ordem, dv);
+      ordem = parts.ordem;
+      dv = parts.dv;
+    }
 
     const { error: apErr } = await sb.schema(SCHEMA).from("aparicoes").insert({
       consulta_id: event.search_id,
       comprador_id: event.user_id,
-      cnpj_basico: parts.basico,
+      cnpj_basico: basico,
       cnpj_ordem: ordem,
       cnpj_dv: dv,
-      nota: Math.round(Number(r.posicao) || 0),
+      nota: aparicaoNotaFromRow(r),
       revelada: false,
     });
     if (!apErr) aparicoesOk += 1;
     else if (!/duplicate|23505/i.test(apErr.message || "")) {
-      logWarn("aparicoes", "insert skipped", { message: apErr.message, code: apErr.code });
+      // retry com null/null (compat site)
+      const { error: apErr2 } = await sb.schema(SCHEMA).from("aparicoes").insert({
+        consulta_id: event.search_id,
+        comprador_id: event.user_id,
+        cnpj_basico: basico,
+        cnpj_ordem: null,
+        cnpj_dv: null,
+        nota: aparicaoNotaFromRow(r),
+        revelada: false,
+      });
+      if (!apErr2) aparicoesOk += 1;
+      else if (!/duplicate|23505/i.test(apErr2.message || "")) {
+        logWarn("aparicoes", "insert skipped", {
+          message: apErr2.message,
+          code: apErr2.code,
+        });
+      }
     }
 
     const { data: agg } = await sb
       .schema(SCHEMA)
       .from("contador_aparicoes")
       .select("id, n_aparicoes")
-      .eq("cnpj", parts.basico)
+      .eq("cnpj", basico)
       .maybeSingle();
 
     if (agg) {
@@ -580,7 +896,7 @@ async function persistWithSupabaseJs(event) {
       contadorOk += 1;
     } else {
       const { error: cErr } = await sb.schema(SCHEMA).from("contador_aparicoes").insert({
-        cnpj: parts.basico,
+        cnpj: basico,
         n_aparicoes: 1,
         limite_aparicoes: 999,
         updated_at: new Date().toISOString().slice(0, 10),
@@ -593,10 +909,10 @@ async function persistWithSupabaseJs(event) {
     ok: true,
     search_id: event.search_id,
     status,
-    resultados: results.length,
+    resultados: canonicalResults.length,
     aparicoes: aparicoesOk,
     contador: contadorOk,
-    results,
+    results: canonicalResults,
     via: "supabase-js",
   };
 }

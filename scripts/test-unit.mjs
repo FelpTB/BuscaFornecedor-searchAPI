@@ -270,6 +270,35 @@ process.env.QDRANT_DIMENSION_KEYS =
   ]);
   assert.equal(summary[0].nome_empresa, "X");
   assert.equal(summary[0].cnpj, "12345");
+
+  const {
+    buildConsultaParamFields,
+    toCanonicalResultItems,
+    scoreToNota,
+  } = await import("../src/db/repositories/consultasRepo.js");
+  assert.equal(scoreToNota(0.622), 62);
+  assert.equal(scoreToNota(85), 85);
+  const fields = buildConsultaParamFields({
+    query: "energia solar",
+    intent: "MISTO",
+    filter: { cidade: ["São Paulo"], modelo_negocio: "Prestador de Serviço" },
+    queries: { descricao: "instalar solar" },
+    weights: { produto: 0.5 },
+  });
+  assert.equal(fields.parametros.descricao, "energia solar");
+  assert.equal(fields.parametros.tipo_busca, "city");
+  assert.equal(fields.parametros.cidade_origem, "São Paulo");
+  assert.equal(fields.qualidade, null);
+  assert.equal(fields.parametros.raw.intent, "MISTO");
+  assert.ok(fields.bm_25);
+  const canon = toCanonicalResultItems(
+    [{ posicao: 1, id: "99", cnpj_basico: "12345678", nome_empresa: "ACME", score_final: 0.8 }],
+    "11111111-1111-1111-1111-111111111111",
+  );
+  assert.equal(canon[0].item.razao_social, "ACME");
+  assert.equal(canon[0].item.nota, 80);
+  assert.equal(canon[0].item.cnpj_basico, "12345678");
+  assert.equal(canon[0].item["limite_listagens "], "10");
   console.log("OK api key hash + results summary");
 }
 
