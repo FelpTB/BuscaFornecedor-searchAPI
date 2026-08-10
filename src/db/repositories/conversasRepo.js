@@ -1,5 +1,5 @@
 /**
- * Repositório conversas + mensagens (histórico de chat autenticado).
+ * Repositório agente_busca_conversas + agente_busca_mensagens.
  * Preferência: pg Pool; fallback PostgREST (service role).
  */
 
@@ -10,6 +10,8 @@ import { logWarn, logInfo } from "../../logger.js";
 import { AppError } from "../../errors/AppError.js";
 
 const SCHEMA = "busca_fornecedor";
+const T_CONV = "agente_busca_conversas";
+const T_MSG = "agente_busca_mensagens";
 
 /**
  * Normaliza mensagens públicas para rows de storage.
@@ -108,18 +110,18 @@ export async function upsertConversa(input) {
   const pool = getPgPool();
   if (pool) {
     await pool.query(
-      `INSERT INTO busca_fornecedor.conversas
+      `INSERT INTO busca_fornecedor.agente_busca_conversas
         (id, user_id, api_key_id, key_prefix, title, source, last_search_id, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8::timestamptz)
        ON CONFLICT (id) DO UPDATE SET
          user_id = EXCLUDED.user_id,
-         api_key_id = COALESCE(EXCLUDED.api_key_id, busca_fornecedor.conversas.api_key_id),
-         key_prefix = COALESCE(EXCLUDED.key_prefix, busca_fornecedor.conversas.key_prefix),
-         title = COALESCE(EXCLUDED.title, busca_fornecedor.conversas.title),
+         api_key_id = COALESCE(EXCLUDED.api_key_id, busca_fornecedor.agente_busca_conversas.api_key_id),
+         key_prefix = COALESCE(EXCLUDED.key_prefix, busca_fornecedor.agente_busca_conversas.key_prefix),
+         title = COALESCE(EXCLUDED.title, busca_fornecedor.agente_busca_conversas.title),
          source = EXCLUDED.source,
-         last_search_id = COALESCE(EXCLUDED.last_search_id, busca_fornecedor.conversas.last_search_id),
+         last_search_id = COALESCE(EXCLUDED.last_search_id, busca_fornecedor.agente_busca_conversas.last_search_id),
          updated_at = EXCLUDED.updated_at
-       WHERE busca_fornecedor.conversas.user_id = EXCLUDED.user_id`,
+       WHERE busca_fornecedor.agente_busca_conversas.user_id = EXCLUDED.user_id`,
       [
         row.id,
         row.user_id,
@@ -135,7 +137,7 @@ export async function upsertConversa(input) {
   }
 
   const sb = getSupabaseAdmin();
-  const { error } = await sb.schema(SCHEMA).from("conversas").upsert(row, {
+  const { error } = await sb.schema(SCHEMA).from(T_CONV).upsert(row, {
     onConflict: "id",
   });
   if (error) throw mapSupabaseError(error, "upsert conversa");
@@ -164,24 +166,24 @@ export async function replaceMessages(conversaId, userId, messages = []) {
     try {
       await client.query("BEGIN");
       const own = await client.query(
-        `SELECT id FROM busca_fornecedor.conversas WHERE id = $1 AND user_id = $2`,
+        `SELECT id FROM busca_fornecedor.agente_busca_conversas WHERE id = $1 AND user_id = $2`,
         [id, uid],
       );
       if (!own.rowCount) {
         throw AppError.forbidden("Conversa não pertence ao usuário");
       }
-      await client.query(`DELETE FROM busca_fornecedor.mensagens WHERE conversa_id = $1`, [
+      await client.query(`DELETE FROM busca_fornecedor.agente_busca_mensagens WHERE conversa_id = $1`, [
         id,
       ]);
       for (const r of rows) {
         await client.query(
-          `INSERT INTO busca_fornecedor.mensagens (conversa_id, role, content, metadata, seq)
+          `INSERT INTO busca_fornecedor.agente_busca_mensagens (conversa_id, role, content, metadata, seq)
            VALUES ($1,$2,$3,$4::jsonb,$5)`,
           [id, r.role, r.content, JSON.stringify(r.metadata), r.seq],
         );
       }
       await client.query(
-        `UPDATE busca_fornecedor.conversas SET updated_at = now() WHERE id = $1 AND user_id = $2`,
+        `UPDATE busca_fornecedor.agente_busca_conversas SET updated_at = now() WHERE id = $1 AND user_id = $2`,
         [id, uid],
       );
       await client.query("COMMIT");
@@ -201,7 +203,7 @@ export async function replaceMessages(conversaId, userId, messages = []) {
   const sb = getSupabaseAdmin();
   const { data: conv, error: cErr } = await sb
     .schema(SCHEMA)
-    .from("conversas")
+    .from(T_CONV)
     .select("id")
     .eq("id", id)
     .eq("user_id", uid)
@@ -211,7 +213,7 @@ export async function replaceMessages(conversaId, userId, messages = []) {
 
   const { error: delErr } = await sb
     .schema(SCHEMA)
-    .from("mensagens")
+    .from(T_MSG)
     .delete()
     .eq("conversa_id", id);
   if (delErr) throw mapSupabaseError(delErr, "delete mensagens");
@@ -224,13 +226,13 @@ export async function replaceMessages(conversaId, userId, messages = []) {
       metadata: r.metadata,
       seq: r.seq,
     }));
-    const { error: insErr } = await sb.schema(SCHEMA).from("mensagens").insert(insertRows);
+    const { error: insErr } = await sb.schema(SCHEMA).from(T_MSG).insert(insertRows);
     if (insErr) throw mapSupabaseError(insErr, "insert mensagens");
   }
 
   await sb
     .schema(SCHEMA)
-    .from("conversas")
+    .from(T_CONV)
     .update({ updated_at: new Date().toISOString() })
     .eq("id", id)
     .eq("user_id", uid);
@@ -256,14 +258,14 @@ export async function listConversas(userId, opts = {}) {
   if (pool) {
     const { rows } = await pool.query(
       `SELECT id, title, source, key_prefix, last_search_id, created_at, updated_at
-       FROM busca_fornecedor.conversas
+       FROM busca_fornecedor.agente_busca_conversas
        WHERE user_id = $1
        ORDER BY updated_at DESC
        LIMIT $2 OFFSET $3`,
       [uid, limit, offset],
     );
     const countRes = await pool.query(
-      `SELECT count(*)::int AS n FROM busca_fornecedor.conversas WHERE user_id = $1`,
+      `SELECT count(*)::int AS n FROM busca_fornecedor.agente_busca_conversas WHERE user_id = $1`,
       [uid],
     );
     return { items: rows, total: countRes.rows[0]?.n ?? rows.length };
@@ -272,7 +274,7 @@ export async function listConversas(userId, opts = {}) {
   const sb = getSupabaseAdmin();
   const { data, error, count } = await sb
     .schema(SCHEMA)
-    .from("conversas")
+    .from(T_CONV)
     .select("id, title, source, key_prefix, last_search_id, created_at, updated_at", {
       count: "exact",
     })
@@ -300,14 +302,14 @@ export async function getConversa(userId, conversaId) {
   if (pool) {
     const { rows: convRows } = await pool.query(
       `SELECT id, user_id, api_key_id, key_prefix, title, source, last_search_id, created_at, updated_at
-       FROM busca_fornecedor.conversas
+       FROM busca_fornecedor.agente_busca_conversas
        WHERE id = $1 AND user_id = $2`,
       [id, uid],
     );
     if (!convRows.length) return null;
     const { rows: msgRows } = await pool.query(
       `SELECT id, role, content, metadata, seq, created_at
-       FROM busca_fornecedor.mensagens
+       FROM busca_fornecedor.agente_busca_mensagens
        WHERE conversa_id = $1
        ORDER BY seq ASC`,
       [id],
@@ -318,7 +320,7 @@ export async function getConversa(userId, conversaId) {
   const sb = getSupabaseAdmin();
   const { data: conv, error } = await sb
     .schema(SCHEMA)
-    .from("conversas")
+    .from(T_CONV)
     .select(
       "id, user_id, api_key_id, key_prefix, title, source, last_search_id, created_at, updated_at",
     )
@@ -330,7 +332,7 @@ export async function getConversa(userId, conversaId) {
 
   const { data: messages, error: mErr } = await sb
     .schema(SCHEMA)
-    .from("mensagens")
+    .from(T_MSG)
     .select("id, role, content, metadata, seq, created_at")
     .eq("conversa_id", id)
     .order("seq", { ascending: true });
@@ -355,7 +357,7 @@ export async function deleteConversa(userId, conversaId) {
   const pool = getPgPool();
   if (pool) {
     const { rowCount } = await pool.query(
-      `DELETE FROM busca_fornecedor.conversas WHERE id = $1 AND user_id = $2`,
+      `DELETE FROM busca_fornecedor.agente_busca_conversas WHERE id = $1 AND user_id = $2`,
       [id, uid],
     );
     if (!rowCount) return null;
@@ -365,7 +367,7 @@ export async function deleteConversa(userId, conversaId) {
   const sb = getSupabaseAdmin();
   const { data, error } = await sb
     .schema(SCHEMA)
-    .from("conversas")
+    .from(T_CONV)
     .delete()
     .eq("id", id)
     .eq("user_id", uid)
@@ -401,7 +403,7 @@ export async function persistConversationSnapshot({
   });
   if (up?.skipped) return up;
   const replaced = await replaceMessages(id, userId, messages);
-  logInfo("conversas", "snapshot persistido", {
+  logInfo("agente_busca_conversas", "snapshot persistido", {
     conversa_id: id,
     user_id: userId,
     messages: replaced.count,
@@ -410,7 +412,7 @@ export async function persistConversationSnapshot({
 }
 
 export function _logPersistFailure(err, meta = {}) {
-  logWarn("conversas", err?.message || String(err), {
+  logWarn("agente_busca_conversas", err?.message || String(err), {
     ...meta,
     code: err?.code,
   });

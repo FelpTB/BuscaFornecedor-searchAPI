@@ -60,6 +60,17 @@ export function resetSession(sessionId) {
 }
 
 /**
+ * Remove sessão da memória sem criar outra (ex.: após DELETE conversa).
+ * @param {string} sessionId
+ */
+export function forgetSession(sessionId) {
+  purgeExpiredSessions();
+  if (typeof sessionId === "string" && sessionId.trim()) {
+    sessions.delete(sessionId.trim());
+  }
+}
+
+/**
  * Remove cadeias tool incompletas / órfãs — evita erro OpenAI
  * "tool message must be response to tool_calls".
  * @param {object[]} messages

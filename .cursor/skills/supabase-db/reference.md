@@ -26,6 +26,10 @@ Campos principais: `id`, `comprador`, `parametros` jsonb, `resultados` jsonb, `s
 
 **Convenção API:** `id = search_id` da request.
 
+### `agente_busca_conversas` / `agente_busca_mensagens`
+
+Histórico de chat do agente (X-Ray / API / MCP). `agente_busca_conversas.id` = `session_id` do cliente. Mensagens em cascade (`ON DELETE CASCADE`). Escrita só via service role; SELECT próprio via RLS (`user_id = auth.uid()`). Migrations: `003_conversas_mensagens.sql` (create), `004_rename_agente_busca_conversas.sql` (rename legado `conversas`/`mensagens`).
+
 ### `usuario_fornecedor` / `app_admins` / `plan_rank`
 
 Ver `docs/supabase-users.md`. Busca autenticada de produto = papel **comprador**.

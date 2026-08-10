@@ -129,13 +129,23 @@ export function getSearchXrayHtml() {
     }
     .bubble.typing { color: var(--muted); font-style: italic; white-space: pre-wrap; }
     .conv-item {
-      display: block; width: 100%; text-align: left; margin: 0 0 0.35rem;
+      display: flex; align-items: flex-start; gap: 0.4rem; width: 100%; text-align: left; margin: 0 0 0.35rem;
       padding: 0.45rem 0.55rem; border-radius: 8px; border: 1px solid var(--border);
-      background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 0.85rem;
+      background: var(--panel-2); color: var(--text); font-size: 0.85rem;
     }
-    .conv-item:hover { border-color: var(--accent); }
+    .conv-item .conv-open {
+      flex: 1; min-width: 0; background: transparent; border: 0; color: inherit;
+      text-align: left; cursor: pointer; padding: 0; font: inherit;
+    }
+    .conv-item .conv-open:hover .conv-title { color: #93c5fd; }
     .conv-item .conv-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .conv-item .conv-meta { color: var(--muted); font-size: 0.75rem; }
+    .conv-item .conv-del {
+      flex: 0 0 auto; border: 1px solid var(--border); background: transparent;
+      color: var(--err); border-radius: 6px; cursor: pointer; padding: 0.15rem 0.4rem;
+      font-size: 0.75rem; font-weight: 650;
+    }
+    .conv-item .conv-del:hover { border-color: var(--err); background: color-mix(in srgb, var(--err) 15%, transparent); }
     .composer {
       border-top: 1px solid var(--border); padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;
       background: var(--panel);
@@ -938,19 +948,62 @@ export function getSearchXrayHtml() {
         el.innerHTML = items.map((c) => {
           const title = esc(c.title || "(sem título)");
           const when = c.updated_at ? new Date(c.updated_at).toLocaleString("pt-BR") : "";
+          const id = esc(c.id);
           return (
-            '<button type="button" class="conv-item" data-conv-id="' + esc(c.id) + '">' +
-              '<span class="conv-title">' + title + '</span>' +
-              '<span class="conv-meta">' + esc(when) + (c.key_prefix ? " · " + esc(c.key_prefix) : "") + '</span>' +
-            '</button>'
+            '<div class="conv-item" data-conv-id="' + id + '">' +
+              '<button type="button" class="conv-open" data-conv-open="' + id + '">' +
+                '<span class="conv-title">' + title + '</span>' +
+                '<span class="conv-meta">' + esc(when) + (c.key_prefix ? " · " + esc(c.key_prefix) : "") + '</span>' +
+              '</button>' +
+              '<button type="button" class="conv-del" data-conv-del="' + id + '" title="Excluir conversa">Excluir</button>' +
+            '</div>'
           );
         }).join("");
-        el.querySelectorAll("[data-conv-id]").forEach((btn) => {
-          btn.addEventListener("click", () => openConversation(btn.getAttribute("data-conv-id")));
+        el.querySelectorAll("[data-conv-open]").forEach((btn) => {
+          btn.addEventListener("click", () => openConversation(btn.getAttribute("data-conv-open")));
+        });
+        el.querySelectorAll("[data-conv-del]").forEach((btn) => {
+          btn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            deleteConversation(btn.getAttribute("data-conv-del"));
+          });
         });
       } catch (e) {
         el.textContent = e.message || String(e);
         el.className = "hint";
+      }
+    }
+
+    async function deleteConversation(id) {
+      if (!id) return;
+      if (!window.confirm("Excluir esta conversa permanentemente? Só a sua conversa será removida.")) {
+        return;
+      }
+      $("formError").textContent = "";
+      try {
+        const res = await fetch("/search/xray/conversations/" + encodeURIComponent(id), {
+          method: "DELETE",
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+        if (state.sessionId === id) {
+          state.sessionId = null;
+          localStorage.removeItem(SESSION_KEY);
+          state.messages = [];
+          updateSessionBadge();
+          renderThread();
+          renderActions([]);
+          $("paramChips").innerHTML = "";
+          $("xray").textContent = "Sem busca nesta sessão ainda.";
+          $("results").innerHTML = "<p class='hint'>Os fornecedores da última busca aparecem aqui.</p>";
+          $("resultsCount").textContent = "0";
+          $("statusMeta").innerHTML = "";
+        }
+        await loadConversationsList();
+      } catch (e) {
+        $("formError").textContent = e.message || String(e);
       }
     }
 

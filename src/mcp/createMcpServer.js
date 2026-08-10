@@ -6,7 +6,9 @@ import { maybeEnqueueFromSearch } from "../telemetry/enqueue.js";
 import {
   listConversas,
   getConversa,
+  deleteConversa,
 } from "../db/repositories/conversasRepo.js";
+import { forgetSession } from "../xray/chatSessions.js";
 
 /**
  * MCP Server — tools espelham REST (mesmo searchService).
@@ -206,6 +208,71 @@ export function createMcpServer(deps) {
         }
         return {
           content: [{ type: "text", text: JSON.stringify(row, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: err.message || String(err),
+                status: err.status || 500,
+              }),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_conversation",
+    {
+      title: "Excluir conversa",
+      description:
+        "Exclui permanentemente uma conversa do usuário autenticado (cascade nas mensagens). Mesmo que DELETE /conversations/:id.",
+      inputSchema: {
+        id: z.string().uuid().describe("UUID da conversa (session_id)"),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const auth = typeof getAuth === "function" ? getAuth() : null;
+      if (!auth?.userId) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: "Autenticação obrigatória",
+                status: 401,
+              }),
+            },
+          ],
+        };
+      }
+      try {
+        const out = await deleteConversa(auth.userId, args?.id);
+        if (!out) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ error: "Conversa não encontrada", status: 404 }),
+              },
+            ],
+          };
+        }
+        forgetSession(args?.id);
+        return {
+          content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
         };
       } catch (err) {
         return {

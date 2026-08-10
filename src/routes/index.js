@@ -20,6 +20,7 @@ import {
   deleteConversa,
 } from "../db/repositories/conversasRepo.js";
 import { hydrateChatSessionIfNeeded } from "../conversations/persistChat.js";
+import { forgetSession } from "../xray/chatSessions.js";
 
 /**
  * Rotas HTTP de negócio.
@@ -166,6 +167,7 @@ export function createApiRouter() {
       if (!req.auth?.userId) throw AppError.unauthorized();
       const out = await deleteConversa(req.auth.userId, req.params.id);
       if (!out) return res.status(404).json({ error: "Conversa não encontrada" });
+      forgetSession(req.params.id);
       return res.json(out);
     } catch (err) {
       return next(err);

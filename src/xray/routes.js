@@ -38,6 +38,7 @@ import { getConsultaById, getAparicoesAgg } from "../db/repositories/consultasRe
 import { isSupabaseConfigured } from "../db/supabaseAdmin.js";
 import { probeApiKeysTable } from "../db/repositories/compradorRepo.js";
 import { AppError } from "../errors/AppError.js";
+import { forgetSession } from "./chatSessions.js";
 import { getAuthModes } from "../config/env.js";
 
 /**
@@ -432,6 +433,8 @@ export function createXrayRouter() {
       if (!auth?.userId) throw AppError.unauthorized();
       const out = await deleteConversa(auth.userId, req.params.id);
       if (!out) return res.status(404).json({ error: "Conversa não encontrada" });
+      // Limpa sessão em memória (mesmo id = session_id)
+      forgetSession(req.params.id);
       return res.json(out);
     } catch (err) {
       return next(err);
