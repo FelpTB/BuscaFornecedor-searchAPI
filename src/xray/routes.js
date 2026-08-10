@@ -14,6 +14,15 @@ import {
 } from "../auth/registerBuyer.js";
 import { maybeEnqueueFromSearch } from "../telemetry/enqueue.js";
 import {
+  hydrateChatSessionIfNeeded,
+  persistConversationTurn,
+} from "../conversations/persistChat.js";
+import {
+  listConversas,
+  getConversa,
+  deleteConversa,
+} from "../db/repositories/conversasRepo.js";
+import {
   getCommsQueueDepth,
   getCommsLogs,
   getCommsSummary,
@@ -316,6 +325,12 @@ export function createXrayRouter() {
         auth = { authenticated: false, userId: null, roles: [], comprador: null, provider: "anonymous" };
       }
 
+      const sessionHint =
+        typeof req.body?.session_id === "string" ? req.body.session_id.trim() : "";
+      if (auth?.userId && sessionHint) {
+        await hydrateChatSessionIfNeeded(sessionHint, auth.userId);
+      }
+
       const out = await runChatTurn({
         session_id: req.body?.session_id,
         message,
@@ -326,7 +341,7 @@ export function createXrayRouter() {
         rerank: req.body?.rerank === true,
         auth,
         assertCanSearch,
-        onSearchCompleted: (bundle, turnAuth) => {
+        onSearchCompleted: (bundle, turnAuth, sid) => {
           maybeEnqueueFromSearch({
             auth: turnAuth || auth,
             searchPayload: bundle.search,
@@ -335,21 +350,40 @@ export function createXrayRouter() {
               intent: bundle.intent,
             },
             source: "xray",
-            session_id: typeof req.body?.session_id === "string" ? req.body.session_id : null,
+            session_id: sid || sessionHint || null,
           });
         },
+      });
+
+      const effectiveAuth = {
+        ...(auth || {}),
+        userId: out.auth?.userId || auth?.userId || null,
+        apiKeyId: auth?.apiKeyId || null,
+        keyPrefix: out.auth?.keyPrefix || auth?.keyPrefix || null,
+        authenticated: Boolean(out.auth?.userId || auth?.userId),
+        provider: out.auth?.provider || auth?.provider || "anonymous",
+        roles: out.auth?.roles || auth?.roles || [],
+        comprador: out.auth?.comprador || auth?.comprador || null,
+      };
+
+      persistConversationTurn({
+        auth: effectiveAuth,
+        sessionId: out.session_id,
+        messages: out.messages,
+        search: out.search,
+        actions: out.actions,
+        source: "xray",
       });
 
       logSuccess("POST /search/xray/chat", "Chat X-Ray turno", {
         session_id: out.session_id,
         actions: out.actions?.map((a) => a.tool),
-        user_id: auth?.userId,
+        user_id: effectiveAuth?.userId,
         search_id: out.search?.search_id,
       });
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       return res.json({
         ...out,
-        // Prefer auth pós-register/login do turno; senão a do request
         auth: out.auth || publicAuthView(auth),
       });
     } catch (err) {
@@ -363,6 +397,45 @@ export function createXrayRouter() {
   router.post("/search/xray/chat/reset", (req, res) => {
     const out = resetChatSession(req.body?.session_id);
     return res.json(out);
+  });
+
+  /** Lista conversas persistidas (espelho autenticado para o painel X-Ray). */
+  router.get("/search/xray/conversations", async (req, res, next) => {
+    try {
+      const auth = await resolveAuthContext(req.headers);
+      if (!auth?.userId) throw AppError.unauthorized();
+      const limit = req.query.limit != null ? Number(req.query.limit) : 30;
+      const offset = req.query.offset != null ? Number(req.query.offset) : 0;
+      const out = await listConversas(auth.userId, { limit, offset });
+      return res.json(out);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.get("/search/xray/conversations/:id", async (req, res, next) => {
+    try {
+      const auth = await resolveAuthContext(req.headers);
+      if (!auth?.userId) throw AppError.unauthorized();
+      const row = await getConversa(auth.userId, req.params.id);
+      if (!row) return res.status(404).json({ error: "Conversa não encontrada" });
+      await hydrateChatSessionIfNeeded(row.id, auth.userId);
+      return res.json(row);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.delete("/search/xray/conversations/:id", async (req, res, next) => {
+    try {
+      const auth = await resolveAuthContext(req.headers);
+      if (!auth?.userId) throw AppError.unauthorized();
+      const out = await deleteConversa(auth.userId, req.params.id);
+      if (!out) return res.status(404).json({ error: "Conversa não encontrada" });
+      return res.json(out);
+    } catch (err) {
+      return next(err);
+    }
   });
 
   router.post("/search/xray/run", async (req, res, next) => {

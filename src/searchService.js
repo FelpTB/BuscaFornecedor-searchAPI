@@ -747,7 +747,7 @@ function getPublicConfig() {
     },
     mcp: {
       endpoint: "/mcp",
-      tools: ["get_config", "search_text"],
+      tools: ["get_config", "search_text", "list_conversations", "get_conversation"],
       auth: getAuthMode() !== "off",
     },
   };

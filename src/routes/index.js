@@ -14,6 +14,12 @@ import {
 } from "../auth/registerBuyer.js";
 import { maybeEnqueueFromSearch } from "../telemetry/enqueue.js";
 import { getConsultaById, getAparicoesAgg } from "../db/repositories/consultasRepo.js";
+import {
+  listConversas,
+  getConversa,
+  deleteConversa,
+} from "../db/repositories/conversasRepo.js";
+import { hydrateChatSessionIfNeeded } from "../conversations/persistChat.js";
 
 /**
  * Rotas HTTP de negócio.
@@ -125,6 +131,42 @@ export function createApiRouter() {
       if (!req.auth?.authenticated) throw AppError.unauthorized();
       const agg = await getAparicoesAgg(req.params.cnpj);
       return res.json(agg || { cnpj: req.params.cnpj, total: 0 });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  /** Histórico de conversas do usuário autenticado. */
+  router.get("/conversations", async (req, res, next) => {
+    try {
+      if (!req.auth?.userId) throw AppError.unauthorized();
+      const limit = req.query.limit != null ? Number(req.query.limit) : 30;
+      const offset = req.query.offset != null ? Number(req.query.offset) : 0;
+      const out = await listConversas(req.auth.userId, { limit, offset });
+      return res.json(out);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.get("/conversations/:id", async (req, res, next) => {
+    try {
+      if (!req.auth?.userId) throw AppError.unauthorized();
+      const row = await getConversa(req.auth.userId, req.params.id);
+      if (!row) return res.status(404).json({ error: "Conversa não encontrada" });
+      await hydrateChatSessionIfNeeded(row.id, req.auth.userId);
+      return res.json(row);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.delete("/conversations/:id", async (req, res, next) => {
+    try {
+      if (!req.auth?.userId) throw AppError.unauthorized();
+      const out = await deleteConversa(req.auth.userId, req.params.id);
+      if (!out) return res.status(404).json({ error: "Conversa não encontrada" });
+      return res.json(out);
     } catch (err) {
       return next(err);
     }

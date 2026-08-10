@@ -128,6 +128,14 @@ export function getSearchXrayHtml() {
       margin: 0.12rem 0 0.12rem 0.85rem; color: #d5deea; font-size: 0.9rem;
     }
     .bubble.typing { color: var(--muted); font-style: italic; white-space: pre-wrap; }
+    .conv-item {
+      display: block; width: 100%; text-align: left; margin: 0 0 0.35rem;
+      padding: 0.45rem 0.55rem; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 0.85rem;
+    }
+    .conv-item:hover { border-color: var(--accent); }
+    .conv-item .conv-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .conv-item .conv-meta { color: var(--muted); font-size: 0.75rem; }
     .composer {
       border-top: 1px solid var(--border); padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;
       background: var(--panel);
@@ -271,6 +279,13 @@ export function getSearchXrayHtml() {
             <div class="meta" id="statusMeta"></div>
           </div>
           <div class="side-body">
+            <div class="card-inner">
+              <div class="pane-head" style="margin:0;padding:0;border:0">
+                <h3 style="margin:0">Minhas conversas</h3>
+                <button type="button" class="ghost" id="btnRefreshConversations">Atualizar</button>
+              </div>
+              <div id="conversationsList" class="hint" style="margin-top:0.5rem;max-height:160px;overflow:auto">Autentique-se para ver o histórico.</div>
+            </div>
             <div class="card-inner">
               <h3>Ações do turno</h3>
               <div class="chips" id="actionChips"><span class="hint">Aguardando conversa…</span></div>
@@ -701,6 +716,8 @@ export function getSearchXrayHtml() {
           $("apiKey").value = data.issued_api_key;
           localStorage.setItem("xray_api_key", data.issued_api_key);
           refreshAuthStatus().catch(() => {});
+        } else if ($("apiKey").value.trim()) {
+          loadConversationsList().catch(() => {});
         }
         if (data.search || data.mcp_tool_call) showSearchSide(data);
       } catch (err) {
@@ -854,6 +871,9 @@ export function getSearchXrayHtml() {
       b.addEventListener("click", () => runProbe(b.dataset.probe)));
     $("formChat").addEventListener("submit", sendChat);
     $("btnNewChat").addEventListener("click", newChat);
+    if ($("btnRefreshConversations")) {
+      $("btnRefreshConversations").addEventListener("click", () => loadConversationsList());
+    }
     $("btnManual").addEventListener("click", runManual);
     $("btnFillTemplate").addEventListener("click", () => {
       $("manualJson").value = JSON.stringify(templateArgs(), null, 2);
@@ -883,10 +903,88 @@ export function getSearchXrayHtml() {
         const mig = data.api_keys_table?.ok === false ? " · api_keys FALTA" : "";
         $("authBadge").textContent = "mode:" + modes + " · " + sess + " · supabase " + (data.supabase_configured ? "ok" : "off") + mig;
         $("authBadge").className = "badge " + (a.authenticated ? "ok" : (data.api_keys_table?.ok === false ? "err" : "warn"));
+        if (a.authenticated) loadConversationsList().catch(() => {});
+        else {
+          $("conversationsList").textContent = "Autentique-se para ver o histórico.";
+          $("conversationsList").className = "hint";
+        }
         return data;
       } catch (e) {
         $("authBadge").textContent = "auth: erro";
         $("authBadge").className = "badge err";
+      }
+    }
+
+    async function loadConversationsList() {
+      const el = $("conversationsList");
+      if (!$("apiKey").value.trim()) {
+        el.textContent = "Autentique-se para ver o histórico.";
+        el.className = "hint";
+        return;
+      }
+      el.textContent = "Carregando…";
+      el.className = "hint";
+      try {
+        const res = await fetch("/search/xray/conversations?limit=20", { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+        const items = data.items || [];
+        if (!items.length) {
+          el.textContent = "Nenhuma conversa salva ainda.";
+          el.className = "hint";
+          return;
+        }
+        el.className = "";
+        el.innerHTML = items.map((c) => {
+          const title = esc(c.title || "(sem título)");
+          const when = c.updated_at ? new Date(c.updated_at).toLocaleString("pt-BR") : "";
+          return (
+            '<button type="button" class="conv-item" data-conv-id="' + esc(c.id) + '">' +
+              '<span class="conv-title">' + title + '</span>' +
+              '<span class="conv-meta">' + esc(when) + (c.key_prefix ? " · " + esc(c.key_prefix) : "") + '</span>' +
+            '</button>'
+          );
+        }).join("");
+        el.querySelectorAll("[data-conv-id]").forEach((btn) => {
+          btn.addEventListener("click", () => openConversation(btn.getAttribute("data-conv-id")));
+        });
+      } catch (e) {
+        el.textContent = e.message || String(e);
+        el.className = "hint";
+      }
+    }
+
+    async function openConversation(id) {
+      if (!id) return;
+      $("formError").textContent = "";
+      try {
+        const res = await fetch("/search/xray/conversations/" + encodeURIComponent(id), {
+          headers: authHeaders(),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+        state.sessionId = data.id;
+        localStorage.setItem(SESSION_KEY, data.id);
+        updateSessionBadge();
+        state.messages = (data.messages || [])
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => ({ role: m.role, content: m.content || "" }));
+        renderThread();
+        const toolMsg = (data.messages || []).slice().reverse().find((m) => m.role === "tool" && m.metadata?.search_id);
+        if (toolMsg?.metadata) {
+          showSearchSide({
+            search: {
+              search_id: toolMsg.metadata.search_id,
+              results: toolMsg.metadata.results || [],
+              fallback: toolMsg.metadata.fallback,
+            },
+            actions: [{ tool: toolMsg.metadata.tool || "search_suppliers", result_count: toolMsg.metadata.result_count }],
+          });
+        }
+        setMode("chat");
+        $("message").focus();
+      } catch (e) {
+        $("formError").textContent = e.message || String(e);
       }
     }
 

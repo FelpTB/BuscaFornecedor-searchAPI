@@ -1,7 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 import { searchTextInputShape } from "../schemas/searchText.js";
 import { createSearchId } from "../middleware/auth.js";
 import { maybeEnqueueFromSearch } from "../telemetry/enqueue.js";
+import {
+  listConversas,
+  getConversa,
+} from "../db/repositories/conversasRepo.js";
 
 /**
  * MCP Server — tools espelham REST (mesmo searchService).
@@ -92,6 +97,125 @@ export function createMcpServer(deps) {
                 status,
                 code: err.code || "SEARCH_ERROR",
                 search_id: searchId,
+              }),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "list_conversations",
+    {
+      title: "Listar conversas",
+      description:
+        "Lista conversas persistidas do usuário autenticado (mesmo que GET /conversations). Requer Bearer/API key.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).optional().describe("Default 30"),
+        offset: z.number().int().min(0).optional().describe("Default 0"),
+      },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const auth = typeof getAuth === "function" ? getAuth() : null;
+      if (!auth?.userId) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: "Autenticação obrigatória para listar conversas",
+                status: 401,
+              }),
+            },
+          ],
+        };
+      }
+      try {
+        const out = await listConversas(auth.userId, {
+          limit: args?.limit,
+          offset: args?.offset,
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: err.message || String(err),
+                status: err.status || 500,
+              }),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_conversation",
+    {
+      title: "Obter conversa",
+      description:
+        "Retorna uma conversa + mensagens do usuário autenticado (mesmo que GET /conversations/:id).",
+      inputSchema: {
+        id: z.string().uuid().describe("UUID da conversa (session_id)"),
+      },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const auth = typeof getAuth === "function" ? getAuth() : null;
+      if (!auth?.userId) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: "Autenticação obrigatória",
+                status: 401,
+              }),
+            },
+          ],
+        };
+      }
+      try {
+        const row = await getConversa(auth.userId, args?.id);
+        if (!row) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ error: "Conversa não encontrada", status: 404 }),
+              },
+            ],
+          };
+        }
+        return {
+          content: [{ type: "text", text: JSON.stringify(row, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: err.message || String(err),
+                status: err.status || 500,
               }),
             },
           ],

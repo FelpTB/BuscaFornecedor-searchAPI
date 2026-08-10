@@ -694,7 +694,7 @@ export async function runChatTurn({
       });
       // Persiste na sessão imediatamente para o fallback no mesmo turno (se houver)
       setSessionLastSearch(session, bundle, bundle.search);
-      onSearchCompleted?.(bundle, toolCtx.auth);
+      onSearchCompleted?.(bundle, toolCtx.auth, session.id);
     },
     onCities: (nearby) => {
       lastCities = nearby;

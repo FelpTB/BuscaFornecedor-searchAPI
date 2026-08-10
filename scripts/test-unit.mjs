@@ -509,4 +509,61 @@ process.env.QDRANT_DIMENSION_KEYS =
   console.log("OK result display mapping");
 }
 
+{
+  const {
+    buildMessageRows,
+    deriveConversationTitle,
+  } = await import("../src/db/repositories/conversasRepo.js");
+  const {
+    buildPersistableMessages,
+    persistConversationTurn,
+  } = await import("../src/conversations/persistChat.js");
+
+  assert.equal(deriveConversationTitle([{ role: "assistant", content: "oi" }]), null);
+  assert.equal(
+    deriveConversationTitle([{ role: "user", content: "  preciso de aço em SP  " }]),
+    "preciso de aço em SP",
+  );
+  const long = "x".repeat(100);
+  assert.equal(deriveConversationTitle([{ role: "user", content: long }]).endsWith("…"), true);
+
+  const rows = buildMessageRows([
+    { role: "system", content: "ignore" },
+    { role: "user", content: "olá" },
+    { role: "assistant", content: "oi" },
+    { role: "tool", content: null, metadata: { search_id: "abc" } },
+  ]);
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0].seq, 1);
+  assert.equal(rows[2].role, "tool");
+  assert.equal(rows[2].metadata.search_id, "abc");
+
+  const persistable = buildPersistableMessages({
+    messages: [
+      { role: "user", content: "busca embalagens" },
+      { role: "assistant", content: "encontrei…" },
+    ],
+    search: {
+      search_id: "11111111-1111-1111-1111-111111111111",
+      results: [
+        { posicao: 1, payload: { cnpj: "12345678000199", nome_empresa: "ACME", uf: "SP", cidade: "Campinas" } },
+      ],
+    },
+    actions: [{ tool: "search_suppliers" }],
+  });
+  assert.equal(persistable.length, 3);
+  assert.equal(persistable[2].role, "tool");
+  assert.equal(persistable[2].metadata.result_count, 1);
+  assert.equal(persistable[2].metadata.results[0].cnpj, "12345678000199");
+
+  const skipped = persistConversationTurn({
+    auth: null,
+    sessionId: "11111111-1111-1111-1111-111111111111",
+    messages: [{ role: "user", content: "x" }],
+  });
+  assert.equal(skipped.queued, false);
+
+  console.log("OK conversation persist helpers");
+}
+
 console.log("\nAll unit checks passed.");
