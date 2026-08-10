@@ -1,29 +1,55 @@
 import express from "express";
+import helmet from "helmet";
+import cors from "cors";
 import { mountMcp } from "./mcp/mountMcp.js";
 import { createApiRouter, executeSearchByText, getPublicConfig } from "./routes/index.js";
 import { createXrayRouter } from "./xray/routes.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
-import { LIMITS, getServerConfig } from "./config/env.js";
+import { LIMITS, getServerConfig, getCorsOrigins, isProductionRuntime } from "./config/env.js";
 import { isXrayEnabled } from "./config/features.js";
 
 /**
  * Factory do app Express — testável e com middleware em ordem fixa.
  *
  * Ordem:
- * 1. requestId
- * 2. json body
- * 3. health (público)
- * 4. X-Ray (harness — desligável via XRAY_ENABLED=0)
- * 5. API router (auth + business)
- * 6. MCP (auth alinhada)
- * 7. 404 + errorHandler
+ * 1. trust proxy + helmet + CORS
+ * 2. requestId
+ * 3. json body
+ * 4. health (público)
+ * 5. X-Ray (harness — desligável via XRAY_ENABLED=0)
+ * 6. API router (auth + business)
+ * 7. MCP (auth alinhada)
+ * 8. 404 + errorHandler
  */
 export function createApp() {
   const app = express();
   const serverCfg = getServerConfig();
 
+  app.set("trust proxy", 1);
   app.disable("x-powered-by");
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
+
+  const origins = getCorsOrigins();
+  if (origins.length > 0) {
+    app.use(
+      cors({
+        origin(origin, cb) {
+          if (!origin || origins.includes(origin)) return cb(null, true);
+          return cb(null, false);
+        },
+        credentials: true,
+      }),
+    );
+  } else if (!isProductionRuntime()) {
+    app.use(cors({ origin: true, credentials: true }));
+  }
+
   app.use(requestIdMiddleware);
   app.use(express.json({ limit: LIMITS.bodyJsonBytes }));
 

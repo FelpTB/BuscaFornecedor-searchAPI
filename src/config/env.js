@@ -55,6 +55,30 @@ export function requireComprador() {
   return v === "1" || v === "true" || v === "yes";
 }
 
+/** Login emite nova API key? Prod default off; local/dev default on (X-Ray). */
+export function loginMintApiKey() {
+  const raw = process.env.LOGIN_MINT_API_KEY;
+  if (raw != null && String(raw).trim() !== "") {
+    const v = String(raw).trim().toLowerCase();
+    return !(v === "0" || v === "false" || v === "off" || v === "no");
+  }
+  return !isProductionRuntime();
+}
+
+/** 0 = ilimitado. Default 5. */
+export function maxActiveApiKeys() {
+  const n = Number(process.env.MAX_ACTIVE_API_KEYS);
+  if (!Number.isFinite(n) || n < 0) return 5;
+  return Math.floor(n);
+}
+
+/** Origins CORS (csv). Vazio = refletir request origin só fora de prod; em prod sem lista = disable browser CORS. */
+export function getCorsOrigins() {
+  const raw = (process.env.CORS_ORIGINS || "").trim();
+  if (!raw) return [];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 export function isTelemetryEnabled() {
   const m = (process.env.TELEMETRY_MODE || "inline").trim().toLowerCase();
   return m !== "off";

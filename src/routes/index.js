@@ -184,7 +184,7 @@ export function createApiRouter() {
       if (!req.auth?.userId) throw AppError.unauthorized();
       const out = await deleteConversa(req.auth.userId, req.params.id);
       if (!out) return res.status(404).json({ error: "Conversa não encontrada" });
-      forgetSession(req.params.id);
+      forgetSession(req.params.id, { userId: req.auth.userId });
       return res.json(out);
     } catch (err) {
       return next(err);

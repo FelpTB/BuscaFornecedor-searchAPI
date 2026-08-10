@@ -40,12 +40,44 @@ import { probeApiKeysTable } from "../db/repositories/compradorRepo.js";
 import { AppError } from "../errors/AppError.js";
 import { forgetSession } from "./chatSessions.js";
 import { getAuthModes } from "../config/env.js";
+import { createRateLimiter } from "../middleware/rateLimit.js";
 
 /**
  * Rotas X-Ray — chat + auth/onboarding + probes Supabase.
  */
 export function createXrayRouter() {
   const router = Router();
+
+  const xrayRateLimit = createRateLimiter({
+    windowMs: 60_000,
+    max: 180,
+    message: "Too many X-Ray requests",
+    keyFn: (req) => {
+      const prefix = req.auth?.keyPrefix;
+      if (prefix) return `xray:key:${prefix}`;
+      return `xray:ip:${req.ip || req.headers["x-forwarded-for"] || "unknown"}`;
+    },
+  });
+
+  router.use("/search/xray", async (req, _res, next) => {
+    try {
+      if (!req.auth) {
+        req.auth = await resolveAuthContext(req.headers, { optional: true });
+      }
+    } catch {
+      req.auth = {
+        authenticated: false,
+        userId: null,
+        roles: [],
+        comprador: null,
+        provider: "anonymous",
+      };
+    }
+    return next();
+  });
+  router.use("/search/xray/chat", xrayRateLimit);
+  router.use("/search/xray/run", xrayRateLimit);
+  router.use("/search/xray/tool-call", xrayRateLimit);
 
   router.get("/search/xray", (_req, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -235,6 +267,8 @@ export function createXrayRouter() {
 
   router.get("/search/xray/comms/summary/:searchId", async (req, res, next) => {
     try {
+      const auth = await resolveAuthContext(req.headers);
+      if (!auth?.authenticated) throw AppError.unauthorized();
       return res.json(getCommsSummary(req.params.searchId));
     } catch (err) {
       return next(err);
@@ -400,9 +434,21 @@ export function createXrayRouter() {
     }
   });
 
-  router.post("/search/xray/chat/reset", (req, res) => {
-    const out = resetChatSession(req.body?.session_id);
-    return res.json(out);
+  router.post("/search/xray/chat/reset", async (req, res, next) => {
+    try {
+      let auth = req.auth;
+      try {
+        auth = await resolveAuthContext(req.headers, { optional: true });
+      } catch {
+        auth = { userId: null };
+      }
+      const out = resetChatSession(req.body?.session_id, {
+        userId: auth?.userId || null,
+      });
+      return res.json(out);
+    } catch (err) {
+      return next(err);
+    }
   });
 
   /** Lista conversas persistidas (espelho autenticado para o painel X-Ray). */
@@ -438,8 +484,7 @@ export function createXrayRouter() {
       if (!auth?.userId) throw AppError.unauthorized();
       const out = await deleteConversa(auth.userId, req.params.id);
       if (!out) return res.status(404).json({ error: "Conversa não encontrada" });
-      // Limpa sessão em memória (mesmo id = session_id)
-      forgetSession(req.params.id);
+      forgetSession(req.params.id, { userId: auth.userId });
       return res.json(out);
     } catch (err) {
       return next(err);

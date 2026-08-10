@@ -1,14 +1,28 @@
 /**
  * Sessões de chat X-Ray em memória (pré-proxy / demo).
  * TTL default 60 min; limpeza opportunista a cada acesso.
+ * Ownership: se session.userId estiver setado, só o mesmo user retoma/reseta.
  */
 
 import { randomUUID } from "node:crypto";
+import { AppError } from "../errors/AppError.js";
 
 const TTL_MS = Number(process.env.XRAY_CHAT_TTL_MS) || 60 * 60 * 1000;
 const MAX_MESSAGES = Number(process.env.XRAY_CHAT_MAX_MESSAGES) || 40;
 
-/** @type {Map<string, { id: string, messages: object[], lastSearch: object|null, lastPlan: object|null, createdAt: number, updatedAt: number }>} */
+/**
+ * @typedef {{
+ *   id: string,
+ *   userId: string|null,
+ *   messages: object[],
+ *   lastSearch: object|null,
+ *   lastPlan: object|null,
+ *   createdAt: number,
+ *   updatedAt: number,
+ * }} ChatSession
+ */
+
+/** @type {Map<string, ChatSession>} */
 const sessions = new Map();
 
 function now() {
@@ -21,11 +35,26 @@ export function purgeExpiredSessions(at = now()) {
   }
 }
 
+function assertSessionAccess(session, userId) {
+  if (!session?.userId) return;
+  if (!userId) {
+    throw AppError.forbidden(
+      "Sessão vinculada a um usuário autenticado. Envie Bearer/X-Api-Key.",
+    );
+  }
+  if (session.userId !== userId) {
+    throw AppError.forbidden("Sessão pertence a outro usuário");
+  }
+}
+
 /**
  * @param {string|null|undefined} sessionId
+ * @param {{ userId?: string|null }} [opts]
+ * @returns {ChatSession}
  */
-export function getOrCreateSession(sessionId) {
+export function getOrCreateSession(sessionId, opts = {}) {
   purgeExpiredSessions();
+  const userId = opts.userId || null;
   const id =
     typeof sessionId === "string" && sessionId.trim()
       ? sessionId.trim()
@@ -35,6 +64,7 @@ export function getOrCreateSession(sessionId) {
   if (!s) {
     s = {
       id,
+      userId,
       messages: [],
       lastSearch: null,
       lastPlan: null,
@@ -43,30 +73,48 @@ export function getOrCreateSession(sessionId) {
     };
     sessions.set(id, s);
   } else {
+    assertSessionAccess(s, userId);
+    if (!s.userId && userId) {
+      s.userId = userId;
+    }
     s.updatedAt = now();
   }
   return s;
 }
 
 /**
- * @param {string} sessionId
+ * @param {string|null|undefined} sessionId
+ * @param {{ userId?: string|null }} [opts]
  */
-export function resetSession(sessionId) {
+export function resetSession(sessionId, opts = {}) {
   purgeExpiredSessions();
+  const userId = opts.userId || null;
   if (typeof sessionId === "string" && sessionId.trim()) {
-    sessions.delete(sessionId.trim());
+    const existing = sessions.get(sessionId.trim());
+    if (existing) {
+      assertSessionAccess(existing, userId);
+      sessions.delete(sessionId.trim());
+    }
   }
-  return getOrCreateSession(null);
+  return getOrCreateSession(null, { userId });
 }
 
 /**
  * Remove sessão da memória sem criar outra (ex.: após DELETE conversa).
  * @param {string} sessionId
+ * @param {{ userId?: string|null }} [opts]
  */
-export function forgetSession(sessionId) {
+export function forgetSession(sessionId, opts = {}) {
   purgeExpiredSessions();
   if (typeof sessionId === "string" && sessionId.trim()) {
-    sessions.delete(sessionId.trim());
+    const existing = sessions.get(sessionId.trim());
+    if (existing) {
+      // DELETE conversa já autenticou o owner — permite limpar se userId bate ou se sessão órfã
+      if (existing.userId && opts.userId && existing.userId !== opts.userId) {
+        throw AppError.forbidden("Sessão pertence a outro usuário");
+      }
+      sessions.delete(sessionId.trim());
+    }
   }
 }
 
@@ -132,7 +180,6 @@ export function setSessionMessages(session, messages) {
   if (sanitized.length <= MAX_MESSAGES) {
     session.messages = sanitized;
   } else {
-    // slice pelo fim e re-sanitiza (descarta tool órfã no início da janela)
     session.messages = sanitizeOpenAiMessages(sanitized.slice(-MAX_MESSAGES));
   }
   session.updatedAt = now();
@@ -161,6 +208,11 @@ export function publicMessages(session) {
 
 export function sessionStats() {
   return { count: sessions.size, ttl_ms: TTL_MS, max_messages: MAX_MESSAGES };
+}
+
+/** @returns {ChatSession|undefined} */
+export function getSessionForTests(id) {
+  return sessions.get(id);
 }
 
 /** Só para testes. */

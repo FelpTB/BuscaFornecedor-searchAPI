@@ -26,6 +26,7 @@ const CACHE_TTL_MS = Number(process.env.AUTH_CACHE_TTL_MS) || 120_000;
  *   keyPrefix: string|null,
  *   provider: 'anonymous'|'api_key'|'supabase'|'entra'|'env_key',
  *   roles: string[],
+ *   scopes: string[],
  *   comprador: { nome: string|null, tierBusca: string, limiteBuscas: number, buscasRealizadas: number }|null
  * }} AuthContext
  */
@@ -53,8 +54,16 @@ export function anonymousAuth() {
     keyPrefix: null,
     provider: "anonymous",
     roles: [],
+    scopes: [],
     comprador: null,
   };
+}
+
+function normalizeScopes(raw) {
+  if (Array.isArray(raw) && raw.length) {
+    return raw.map((s) => String(s).trim()).filter(Boolean);
+  }
+  return ["search"];
 }
 
 function cacheGet(key) {
@@ -137,6 +146,7 @@ async function resolveEnvApiKey(token) {
     keyPrefix: prefix,
     provider: "env_key",
     roles: [],
+    scopes: ["search"],
     comprador: null,
   };
 }
@@ -159,6 +169,7 @@ async function resolveSupabaseApiKey(token) {
     keyPrefix: row.key_prefix,
     provider: "api_key",
     roles: [],
+    scopes: normalizeScopes(row.scopes),
     comprador: null,
   };
   ctx = await enrichWithComprador(ctx);
@@ -185,6 +196,7 @@ async function resolveSupabaseJwt(token) {
     keyPrefix: null,
     provider: "supabase",
     roles: [],
+    scopes: ["search"],
     comprador: null,
   };
   ctx = await enrichWithComprador(ctx);
@@ -270,6 +282,12 @@ export async function assertCanSearch(auth) {
       "Busca requer autenticação. Crie conta (register-buyer), faça login (login-buyer) ou envie Bearer/X-Api-Key.",
     );
   }
+
+  const scopes = Array.isArray(auth?.scopes) ? auth.scopes : auth?.authenticated ? ["search"] : [];
+  if (auth?.authenticated && scopes.length && !scopes.includes("search") && !scopes.includes("*")) {
+    throw AppError.forbidden('API key sem scope "search"');
+  }
+
   if (!requireComprador()) return;
 
   if (!auth?.authenticated || !auth.userId) {

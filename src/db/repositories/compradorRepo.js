@@ -207,3 +207,17 @@ export async function listApiKeysForUser(userId) {
   if (error) throw mapSupabaseError(error, "list api_keys");
   return data || [];
 }
+
+export async function countActiveApiKeys(userId) {
+  if (!userId || !isSupabaseConfigured()) return 0;
+  const sb = getSupabaseAdmin();
+  const { count, error } = await sb
+    .schema(SCHEMA)
+    .from("api_keys")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("active", true)
+    .is("revoked_at", null);
+  if (error) throw mapSupabaseError(error, "count api_keys");
+  return Number(count) || 0;
+}

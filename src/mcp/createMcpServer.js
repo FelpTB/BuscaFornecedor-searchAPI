@@ -273,7 +273,7 @@ export function createMcpServer(deps) {
             ],
           };
         }
-        forgetSession(args?.id);
+        forgetSession(args?.id, { userId: auth.userId });
         return {
           content: [{ type: "text", text: JSON.stringify(out, null, 2) }],
         };

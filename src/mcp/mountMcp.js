@@ -11,6 +11,7 @@ import { logError, logSuccess } from "../logger.js";
 /**
  * Monta MCP Streamable HTTP em /mcp (POST/GET/DELETE).
  * Auth alinhada ao REST via resolveAuthContext (async) + AsyncLocalStorage.
+ * Rate limit aplica-se após auth para chavear por keyPrefix quando houver.
  */
 export function mountMcp(app, deps) {
   const transports = Object.create(null);
@@ -26,6 +27,8 @@ export function mountMcp(app, deps) {
     keyFn: (req) => {
       const prefix = req.auth?.keyPrefix;
       if (prefix) return `mcp:key:${prefix}`;
+      const uid = req.auth?.userId;
+      if (uid) return `mcp:user:${uid}`;
       return `mcp:ip:${req.ip || req.headers["x-forwarded-for"] || "unknown"}`;
     },
   });
@@ -61,12 +64,31 @@ export function mountMcp(app, deps) {
     }
   };
 
-  const withAuthContext = (handler) => async (req, res) => {
+  const withAuthAndRateLimit = (handler) => async (req, res) => {
     if (!(await requireMcpAuth(req, res))) return;
+    let limited = false;
+    await new Promise((resolve) => {
+      mcpSearchRateLimit(req, res, (err) => {
+        if (err) {
+          limited = true;
+          if (!res.headersSent) {
+            res.status(500).json({
+              jsonrpc: "2.0",
+              error: { code: -32603, message: "Internal server error" },
+              id: null,
+            });
+          }
+        } else if (res.headersSent) {
+          limited = true;
+        }
+        resolve();
+      });
+    });
+    if (limited || res.headersSent) return;
     await runWithAuth(req.auth, () => handler(req, res));
   };
 
-  const mcpPostHandler = withAuthContext(async (req, res) => {
+  const mcpPostHandler = withAuthAndRateLimit(async (req, res) => {
     const sessionId = req.headers["mcp-session-id"];
 
     try {
@@ -123,7 +145,7 @@ export function mountMcp(app, deps) {
     }
   });
 
-  const mcpGetHandler = withAuthContext(async (req, res) => {
+  const mcpGetHandler = withAuthAndRateLimit(async (req, res) => {
     const sessionId = req.headers["mcp-session-id"];
     if (!sessionId || !transports[sessionId]) {
       res.status(400).send("Invalid or missing session ID");
@@ -137,7 +159,7 @@ export function mountMcp(app, deps) {
     }
   });
 
-  const mcpDeleteHandler = withAuthContext(async (req, res) => {
+  const mcpDeleteHandler = withAuthAndRateLimit(async (req, res) => {
     const sessionId = req.headers["mcp-session-id"];
     if (!sessionId || !transports[sessionId]) {
       res.status(400).send("Invalid or missing session ID");
@@ -151,9 +173,9 @@ export function mountMcp(app, deps) {
     }
   });
 
-  app.post("/mcp", mcpSearchRateLimit, mcpPostHandler);
-  app.get("/mcp", mcpSearchRateLimit, mcpGetHandler);
-  app.delete("/mcp", mcpSearchRateLimit, mcpDeleteHandler);
+  app.post("/mcp", mcpPostHandler);
+  app.get("/mcp", mcpGetHandler);
+  app.delete("/mcp", mcpDeleteHandler);
 
   return {
     closeAll: async () => {

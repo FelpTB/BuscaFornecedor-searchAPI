@@ -14,14 +14,27 @@ import {
   insertApiKey,
   listApiKeysForUser,
   revokeApiKey,
+  countActiveApiKeys,
 } from "../db/repositories/compradorRepo.js";
 import { generateApiKey } from "./apiKeyHash.js";
 import { AppError, isAppError } from "../errors/AppError.js";
 import { mapSupabaseError } from "../db/mapSupabaseError.js";
+import { loginMintApiKey, maxActiveApiKeys } from "../config/env.js";
 
 function rethrowMapped(e) {
   if (isAppError(e)) throw e;
   throw mapSupabaseError(e);
+}
+
+async function assertUnderKeyCap(userId) {
+  const max = maxActiveApiKeys();
+  if (!max) return;
+  const n = await countActiveApiKeys(userId);
+  if (n >= max) {
+    throw AppError.forbidden(
+      `Limite de ${max} API keys ativas atingido. Revogue uma chave antes de emitir outra.`,
+    );
+  }
 }
 
 function formatBuyerResult({ userId, email, comprador, stored, key, extra = {} }) {
@@ -34,14 +47,15 @@ function formatBuyerResult({ userId, email, comprador, stored, key, extra = {} }
       limite_buscas: comprador?.limite_buscas ?? 50,
       buscas_realizadas: comprador?.buscas_realizadas ?? 0,
     },
-    api_key: {
-      id: stored.id,
-      name: stored.name,
-      key_prefix: stored.key_prefix,
-      /** plaintext — mostrar uma única vez */
-      key: key.plaintext,
-      warning: "Guarde esta chave agora. Ela não será exibida novamente.",
-    },
+    api_key: stored && key
+      ? {
+          id: stored.id,
+          name: stored.name,
+          key_prefix: stored.key_prefix,
+          key: key.plaintext,
+          warning: "Guarde esta chave agora. Ela não será exibida novamente.",
+        }
+      : null,
     ...extra,
   };
 }
@@ -141,6 +155,7 @@ export async function registerBuyer(input = {}) {
       fonte: input.fonte || "Agente",
     });
 
+    await assertUnderKeyCap(userId);
     const key = generateApiKey();
     const stored = await insertApiKey({
       userId,
@@ -220,6 +235,24 @@ export async function loginBuyer(input = {}) {
       throw AppError.forbidden("Não foi possível criar/obter perfil comprador");
     }
 
+    if (!loginMintApiKey()) {
+      return {
+        user_id: user.id,
+        email: user.email || email,
+        comprador: {
+          nome: comprador?.nome ?? null,
+          tier_busca: comprador?.tier_busca ?? "normal",
+          limite_buscas: comprador?.limite_buscas ?? 50,
+          buscas_realizadas: comprador?.buscas_realizadas ?? 0,
+        },
+        api_key: null,
+        access_token: data.session?.access_token || null,
+        note:
+          "Login OK sem nova API key (LOGIN_MINT_API_KEY=0). Use access_token (JWT) ou POST /auth/api-keys autenticado.",
+      };
+    }
+
+    await assertUnderKeyCap(user.id);
     const key = generateApiKey();
     const stored = await insertApiKey({
       userId: user.id,
@@ -254,6 +287,7 @@ export async function issueApiKeyForUser(userId, { name = "agent" } = {}) {
     if (!comprador) {
       throw AppError.forbidden("Usuário sem perfil comprador");
     }
+    await assertUnderKeyCap(userId);
     const key = generateApiKey();
     const stored = await insertApiKey({
       userId,

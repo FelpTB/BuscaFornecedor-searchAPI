@@ -410,6 +410,78 @@ process.env.QDRANT_DIMENSION_KEYS =
 }
 
 {
+  _clearAllSessionsForTests();
+  const owned = getOrCreateSession(null, { userId: "user-a" });
+  assert.equal(owned.userId, "user-a");
+  const same = getOrCreateSession(owned.id, { userId: "user-a" });
+  assert.equal(same.id, owned.id);
+  try {
+    getOrCreateSession(owned.id, { userId: "user-b" });
+    assert.fail("other user should not resume session");
+  } catch (e) {
+    assert.equal(e.status, 403);
+  }
+  try {
+    getOrCreateSession(owned.id, { userId: null });
+    assert.fail("anon should not resume owned session");
+  } catch (e) {
+    assert.equal(e.status, 403);
+  }
+  const orphan = getOrCreateSession(null);
+  const claimed = getOrCreateSession(orphan.id, { userId: "user-c" });
+  assert.equal(claimed.userId, "user-c");
+  console.log("OK chat session ownership");
+}
+
+{
+  const { assertCanSearch } = await import("../src/auth/resolveAuth.js");
+  process.env.AUTH_MODE = "api_key";
+  process.env.REQUIRE_COMPRADOR = "0";
+  try {
+    await assertCanSearch({
+      authenticated: true,
+      userId: "u1",
+      scopes: ["admin"],
+      roles: [],
+      comprador: null,
+    });
+    assert.fail("scope without search should fail");
+  } catch (e) {
+    assert.equal(e.status, 403);
+  }
+  await assertCanSearch({
+    authenticated: true,
+    userId: "u1",
+    scopes: ["search"],
+    roles: [],
+    comprador: null,
+  });
+  process.env.AUTH_MODE = "off";
+  console.log("OK search scope enforcement");
+}
+
+{
+  const { loginMintApiKey, maxActiveApiKeys } = await import("../src/config/env.js");
+  const prevNode = process.env.NODE_ENV;
+  const prevMint = process.env.LOGIN_MINT_API_KEY;
+  delete process.env.LOGIN_MINT_API_KEY;
+  process.env.NODE_ENV = "production";
+  assert.equal(loginMintApiKey(), false);
+  process.env.NODE_ENV = "development";
+  assert.equal(loginMintApiKey(), true);
+  process.env.LOGIN_MINT_API_KEY = "1";
+  process.env.NODE_ENV = "production";
+  assert.equal(loginMintApiKey(), true);
+  process.env.MAX_ACTIVE_API_KEYS = "3";
+  assert.equal(maxActiveApiKeys(), 3);
+  process.env.NODE_ENV = prevNode || "development";
+  if (prevMint != null) process.env.LOGIN_MINT_API_KEY = prevMint;
+  else delete process.env.LOGIN_MINT_API_KEY;
+  delete process.env.MAX_ACTIVE_API_KEYS;
+  console.log("OK login mint + key cap defaults");
+}
+
+{
   // Orphan tool + incomplete tool_calls must be dropped (OpenAI rejects otherwise)
   const cleaned = sanitizeOpenAiMessages([
     { role: "tool", tool_call_id: "orphan", content: "{}" },

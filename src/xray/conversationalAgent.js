@@ -31,6 +31,19 @@ const MODEL =
 
 const MAX_TOOL_ROUNDS = Number(process.env.XRAY_CHAT_MAX_TOOL_ROUNDS) || 4;
 
+function llmAuthToolsEnabled() {
+  const raw = (process.env.XRAY_LLM_AUTH_TOOLS ?? "1").trim().toLowerCase();
+  return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
+}
+
+const AUTH_TOOL_NAMES = new Set(["register_buyer", "login_buyer"]);
+
+/** Tools expostas ao modelo (respeita XRAY_LLM_AUTH_TOOLS). */
+export function getChatTools() {
+  if (llmAuthToolsEnabled()) return CHAT_TOOLS;
+  return CHAT_TOOLS.filter((t) => !AUTH_TOOL_NAMES.has(t.function?.name));
+}
+
 let _client = null;
 function getClient() {
   if (!_client) {
@@ -320,6 +333,7 @@ function authFromBuyerResult(out) {
     keyPrefix: out?.api_key?.key_prefix || null,
     provider: "api_key",
     roles: ["comprador"],
+    scopes: ["search"],
     comprador: {
       nome: c.nome ?? null,
       tierBusca: c.tier_busca || "normal",
@@ -374,6 +388,9 @@ async function executeTool(name, args, ctx) {
   }
 
   if (name === "register_buyer") {
+    if (!llmAuthToolsEnabled()) {
+      return { ok: false, error: "register_buyer desabilitado (XRAY_LLM_AUTH_TOOLS=0)" };
+    }
     try {
       const out = await registerBuyer({
         email: args.email,
@@ -385,6 +402,9 @@ async function executeTool(name, args, ctx) {
         key_name: "xray-chat",
       });
       ctx.auth = authFromBuyerResult(out);
+      if (ctx.session && ctx.auth?.userId) {
+        ctx.session.userId = ctx.auth.userId;
+      }
       if (typeof out.api_key?.key === "string" && out.api_key.key) {
         ctx.issuedApiKey = out.api_key.key;
       }
@@ -414,6 +434,9 @@ async function executeTool(name, args, ctx) {
   }
 
   if (name === "login_buyer") {
+    if (!llmAuthToolsEnabled()) {
+      return { ok: false, error: "login_buyer desabilitado (XRAY_LLM_AUTH_TOOLS=0)" };
+    }
     try {
       const out = await loginBuyer({
         email: args.email,
@@ -422,6 +445,9 @@ async function executeTool(name, args, ctx) {
         key_name: "xray-chat-login",
       });
       ctx.auth = authFromBuyerResult(out);
+      if (ctx.session && ctx.auth?.userId) {
+        ctx.session.userId = ctx.auth.userId;
+      }
       if (typeof out.api_key?.key === "string" && out.api_key.key) {
         ctx.issuedApiKey = out.api_key.key;
       }
@@ -647,7 +673,9 @@ export async function runChatTurn({
     throw err;
   }
 
-  const session = getOrCreateSession(session_id);
+  const session = getOrCreateSession(session_id, {
+    userId: auth?.userId || null,
+  });
   const client = getClient();
   const started = Date.now();
 
@@ -722,7 +750,7 @@ export async function runChatTurn({
     const response = await client.chat.completions.create({
       model: MODEL,
       messages: openaiMessages,
-      tools: CHAT_TOOLS,
+      tools: getChatTools(),
       tool_choice: "auto",
       temperature: 0.35,
     });
@@ -856,7 +884,7 @@ export async function runChatTurn({
     simulation: {
       client: "conversational-agent → microsoft-copilot-mcp-preview",
       role: "Chat B2B + Query Manager + Cities API + Fallback",
-      tools_available: CHAT_TOOLS.map((t) => t.function.name),
+      tools_available: getChatTools().map((t) => t.function.name),
       transport: "same-process (X-Ray) → produção usará Streamable HTTP /mcp",
       tool_rounds: rounds,
     },
@@ -864,8 +892,10 @@ export async function runChatTurn({
   };
 }
 
-export function resetChatSession(session_id) {
-  const session = resetSession(session_id);
+export function resetChatSession(session_id, opts = {}) {
+  const session = resetSession(session_id, {
+    userId: opts.userId || null,
+  });
   return {
     session_id: session.id,
     messages: [],

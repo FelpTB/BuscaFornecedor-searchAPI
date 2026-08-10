@@ -30,7 +30,7 @@ export async function hydrateChatSessionIfNeeded(sessionId, userId) {
   if (!sid || !uid) return null;
   if (!isSupabaseConfigured() && !getPgPool()) return null;
 
-  const session = getOrCreateSession(sid);
+  const session = getOrCreateSession(sid, { userId: uid });
   if (session.messages.length > 0) return session;
 
   try {
