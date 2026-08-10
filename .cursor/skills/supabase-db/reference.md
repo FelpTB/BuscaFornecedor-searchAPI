@@ -39,6 +39,20 @@ Produtores `xray`/`api`/`mcp` devem gravar (ou ser normalizados para):
 - `qualidade`: só avaliação (`Ótimo`/`Bom`/`Ruim`/`Péssimo`) — **nunca** intent
 - Migration `005_padronizar_consultas_xray.sql`: `normalizar_parametros_consulta`, `enriquecer_resultados_consulta`, triggers, RPC `public.registrar_consulta`
 
+### RLS (defesa em profundidade)
+
+Migration `007_rls_hardening_consultas_aparicoes.sql` (aplicada em abcAdvise 2026-08-10):
+
+| Tabela | authenticated | anon | service_role |
+|--------|---------------|------|--------------|
+| `consultas` | SELECT/UPDATE próprio (`comprador = auth.uid()`) | deny | bypass (writers API) |
+| `aparicoes` | SELECT próprio / via consulta / fornecedor CNPJ | deny | bypass |
+| `usuario_comprador` | SELECT/UPDATE próprio (`id = auth.uid()`) | deny | bypass |
+| `contador_aparicoes` | SELECT | deny | bypass (writes) |
+
+**Removido:** policies `Permitir leitura pública - *`, `Anyone can create consultas`, `auth users can read usuario_comprador` (SELECT true).
+
+
 Writer Node: `src/db/repositories/consultasRepo.js` (`buildConsultaParamFields`, `toCanonicalResultItems`).
 
 ### `usuario_fornecedor` / `app_admins` / `plan_rank`
