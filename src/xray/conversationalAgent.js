@@ -4,6 +4,7 @@
  */
 
 import OpenAI from "openai";
+import { randomUUID } from "node:crypto";
 import { fetchCitiesNearby } from "../clients/citiesApi.js";
 import { planSearchToolCall, normalizeUfList, formatUfFilterValue } from "./searchAgent.js";
 import { runFallbackCascade } from "../search/fallbackSearch.js";
@@ -155,6 +156,12 @@ export const CHAT_TOOLS = [
           final_limit: { type: "integer" },
           debug: { type: "boolean" },
           rerank: { type: "boolean" },
+          exact_terms: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Termos exatos que o usuário pediu (entre aspas ou 'termo exato'). Vão obrigatoriamente para BM25/sparse.",
+          },
         },
         required: ["briefing"],
         additionalProperties: false,
@@ -218,8 +225,10 @@ Comportamento:
 6. GEO na tool search_suppliers:
    - Pediu cidade/raio → city_name (+ uf se souber) + radius_km.
    - Pediu estado(s)/UF sem cidade → passe uf="SP" ou uf="SP,RJ,MG" e NÃO passe city_name (filtro Qdrant por UF).
-7. Após busca, resuma tops. Histórico/aparições gravam async no Supabase quando autenticado.
-8. Evite jargão interno (Query Manager, RRF, Fallback Vector) na conversa — fale em "busca mais geral / estadual / nacional".
+7. TERMO EXATO: se o usuário colocar palavra/frase entre aspas OU pedir "termo exato"/"busca exata",
+   passe exact_terms=["..."] em search_suppliers (e mantenha no briefing). Isso força o termo no BM25.
+8. Após busca, resuma tops. Histórico/aparições gravam async no Supabase quando autenticado.
+9. Evite jargão interno (Query Manager, RRF, Fallback Vector) na conversa — fale em "busca mais geral / estadual / nacional".
 
 Fallback (busca mais geral) — regra obrigatória:
 - Se search_suppliers retornar result_count < requested_limit (suggest_broader_search=true), AO FINAL PERGUNTE se deseja busca mais geral. NÃO chame expand_search_fallback nesse mesmo turno.
@@ -531,6 +540,11 @@ async function executeTool(name, args, ctx) {
         debug: args.debug === true || defaults.debug === true,
         rerank: args.rerank === true || defaults.rerank === true,
         geo: Object.keys(geo).length ? geo : undefined,
+        exact_terms: Array.isArray(args.exact_terms)
+          ? args.exact_terms
+          : typeof args.exact_terms === "string"
+            ? args.exact_terms
+            : undefined,
       });
       const searchStarted = Date.now();
       const search = await executeSearchByText(plan.mcp_tool_call.arguments, {
@@ -609,7 +623,9 @@ async function executeTool(name, args, ctx) {
           scope: cascade.scope,
           last_filter: cascade.last_filter,
         },
-        search_id: prevSearch?.search_id || null,
+        // Novo search_id: evita already_persisted e permite gravar consulta/aparições da expansão
+        search_id: randomUUID(),
+        parent_search_id: prevSearch?.search_id || null,
       };
 
       const full = {
@@ -635,6 +651,7 @@ async function executeTool(name, args, ctx) {
             fallback: true,
             scope: cascade.scope,
             mode: cascade.mode,
+            parent_search_id: prevSearch?.search_id || null,
           },
         },
       };

@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { fetchCitiesNearby } from "../clients/citiesApi.js";
+import { mergeBm25Query, resolveExactTerms } from "../search/bm25Query.js";
 
 /**
  * Pré-proxy X-Ray = Query Manager B2B + bridge para tool MCP search_text.
@@ -250,18 +251,21 @@ DIRETRIZES DE CONTEÚDO (ANTI-ERRO)
 1) Ancoragem de Objeto (denso): em produtos e servicos, o objeto principal deve estar em cada termo.
    Ex.: "Higienização de Big Bags", "Manutenção de Silos".
 
-2) BM25 — REGRA DISCRIMINANTE (CRÍTICA):
+2) BM25 — REGRA DISCRIMINANTE (padrão) + TERMO EXATO (override):
    bm25 deve conter APENAS termos que DIFERENCIAM este produto/serviço de vizinhos semânticos.
-   PROIBIDO: substantivo genérico compartilhado com nichos vizinhos.
+   PROIBIDO: substantivo genérico compartilhado com nichos vizinhos — EXCETO se for termo exato.
    Lógica:
    a) Identifique o termo que torna a busca específica
    b) Use só variações desse termo e termos técnicos exclusivos
    c) NÃO inclua o genérico compartilhado
+   d) TERMO EXATO: se o usuário marcar termo entre aspas ("...") OU disser "termo exato" / "busca exata",
+      esse termo DEVE estar em bm25 E em exact_terms (lista). Nunca remova termo exato.
    Exemplos:
    - "caroço de açaí" → bm25: "caroço caroços semente sementes biomassa resíduo" (SEM "açaí")
    - "proteína bovina hidrolisada" → bm25: "hidrolisada hidrolisado colágeno peptídeo" (SEM "bovina"/"carne")
    - "parafuso para embarcação" → bm25: "embarcação embarcações naval náutico marítimo inox" (SEM "parafuso")
    - "tinta epóxi para piso industrial" → bm25: "epóxi piso industrial revestimento resistência" (SEM "tinta")
+   - usuário: fornecedor de "parafuso naval" (termo exato) → bm25 inclui "parafuso naval" + discriminantes; exact_terms: ["parafuso naval"]
    Queries GENÉRICAS (sem diferenciador): substantivos concretos singular/plural ok
    - "material de escritório" → bm25: "escritório papelaria papel caneta pasta"
 
@@ -294,7 +298,8 @@ SCHEMA DE SAÍDA
   "descricao": "processos e diferenciais técnicos",
   "publico": "string",
   "clientes": "string",
-  "bm25": "APENAS termos discriminantes (sem genérico compartilhado)",
+  "bm25": "APENAS termos discriminantes (sem genérico compartilhado), EXCETO termos exatos",
+  "exact_terms": ["termo marcado pelo usuário ou []"],
   "Modelo_Negocio": "um dos valores permitidos",
   "cidade_centro": "string|null",
   "uf": "sigla UF ou lista CSV (ex. SP ou SP,RJ)|null",
@@ -308,7 +313,7 @@ SCHEMA DE SAÍDA
  * Converte saída do Query Manager → arguments da tool search_text.
  * @param {object} qm
  * @param {object} config
- * @param {{ userQuery?: string, final_limit?: number, debug?: boolean, rerank?: boolean, cityNames?: string[]|null, geoMeta?: object|null, ufs?: string[]|null }} [options]
+ * @param {{ userQuery?: string, final_limit?: number, debug?: boolean, rerank?: boolean, cityNames?: string[]|null, geoMeta?: object|null, ufs?: string[]|null, exact_terms?: string[]|string }} [options]
  */
 export function mapQueryManagerToToolArgs(qm, config, options = {}) {
   const dimMap = resolveDimMap(config.dimension_keys);
@@ -358,6 +363,11 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
     if (singleCity) filter.cidade = singleCity;
   }
 
+  const exactTerms = resolveExactTerms({
+    exact_terms: options.exact_terms ?? qm.exact_terms,
+    userQuery: options.userQuery || query,
+  });
+
   const toolArguments = {
     query,
     weights,
@@ -372,10 +382,12 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
   };
 
   if (Object.keys(filter).length) toolArguments.filter = filter;
+  if (exactTerms.length) toolArguments.exact_terms = exactTerms;
 
   if (includeBm25) {
-    toolArguments.bm25_query =
+    const bm25Base =
       typeof qm.bm25 === "string" && qm.bm25.trim() ? qm.bm25.trim() : query;
+    toolArguments.bm25_query = mergeBm25Query(bm25Base, exactTerms);
   } else {
     toolArguments.bm25 = false;
   }
@@ -394,6 +406,7 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
       publico: qm.publico ?? null,
       clientes: qm.clientes ?? null,
       bm25: qm.bm25 ?? null,
+      exact_terms: exactTerms.length ? exactTerms : null,
       Modelo_Negocio: modelo,
       cidade_centro: qm.cidade_centro ?? qm.cidade ?? null,
       uf: ufFilter,
@@ -456,7 +469,7 @@ export function resolveUfFilter(qm = {}, geoFromUi = {}) {
  * Planeja via Query Manager e monta tool call MCP search_text.
  * @param {string} userQuery
  * @param {object} config
- * @param {{ final_limit?: number, debug?: boolean, rerank?: boolean, geo?: { city_name?: string, uf?: string|string[], ufs?: string[], radius_km?: number } }} [options]
+ * @param {{ final_limit?: number, debug?: boolean, rerank?: boolean, exact_terms?: string[]|string, geo?: { city_name?: string, uf?: string|string[], ufs?: string[], radius_km?: number } }} [options]
  */
 export async function planSearchToolCall(userQuery, config, options = {}) {
   const query = typeof userQuery === "string" ? userQuery.trim() : "";

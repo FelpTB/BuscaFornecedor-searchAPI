@@ -210,7 +210,7 @@ export function createApiRouter() {
         searchId,
       });
 
-      maybeEnqueueFromSearch({
+      const telemetry = maybeEnqueueFromSearch({
         auth: req.auth,
         searchPayload: payload,
         requestParams: parsed.data,
@@ -222,7 +222,8 @@ export function createApiRouter() {
       return res.json({
         ...payload,
         auth: publicAuthView(req.auth),
-        telemetry_queued: Boolean(req.auth?.userId),
+        telemetry_queued: Boolean(telemetry?.queued),
+        telemetry_reason: telemetry?.queued ? undefined : telemetry?.reason,
       });
     } catch (err) {
       const status = err.status ?? err.statusCode ?? 500;

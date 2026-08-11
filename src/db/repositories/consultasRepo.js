@@ -569,8 +569,15 @@ export async function persistSearchCompleted(event) {
   }
 
   if (result?.skipped && result.reason === "already_persisted") {
+    const backfill = await backfillAparicoesForExistingConsulta(event);
     const visible = await getConsultaById(event.search_id);
-    return { ...result, visible_on_supabase: Boolean(visible) };
+    return {
+      ...result,
+      ...backfill,
+      ok: Boolean(backfill?.ok) || Boolean(visible),
+      visible_on_supabase: Boolean(visible),
+      results: backfill?.results || result.results,
+    };
   }
 
   if (!result?.ok) return result;
@@ -1007,4 +1014,134 @@ export async function getConsultaById(searchId) {
     .maybeSingle();
   if (error) throw new Error(error.message);
   return data;
+}
+
+/**
+ * Se a consulta já existe (23505) mas aparições faltam (crash parcial / fallback reusado),
+ * tenta inserir aparições ausentes sem recontar buscas_realizadas.
+ * @param {object} event
+ */
+async function backfillAparicoesForExistingConsulta(event) {
+  if (!isSupabaseConfigured() || !event?.search_id || !event?.user_id) {
+    return { backfilled: false, reason: "missing_context" };
+  }
+
+  const sb = getSupabaseAdmin();
+  const { count, error: countErr } = await sb
+    .schema(SCHEMA)
+    .from("aparicoes")
+    .select("id", { count: "exact", head: true })
+    .eq("consulta_id", event.search_id);
+
+  if (countErr) {
+    logWarn("telemetry", "falha ao contar aparicoes para backfill", {
+      search_id: event.search_id,
+      message: countErr.message,
+    });
+    return { backfilled: false, reason: "count_failed" };
+  }
+
+  let results = summarizeResultsForStorage(
+    event.results?.length ? event.results : event.results_summary || [],
+  );
+  const pool = getPgPool();
+  if (pool) results = await enrichFromCompanyProfile(pool, results);
+  results = applyPositionNotas(results);
+  const withCnpj = results.filter((r) => {
+    const basico =
+      (r.cnpj_basico && digitsOnly(r.cnpj_basico).slice(0, 8)) ||
+      (r.cnpj && digitsOnly(r.cnpj).slice(0, 8)) ||
+      null;
+    return Boolean(basico);
+  });
+
+  if ((count || 0) >= withCnpj.length && withCnpj.length > 0) {
+    return {
+      backfilled: false,
+      reason: "already_persisted",
+      aparicoes_existing: count,
+      ok: true,
+      results: toCanonicalResultItems(results, event.search_id),
+    };
+  }
+
+  let aparicoesOk = 0;
+  for (const r of results) {
+    const basico =
+      (r.cnpj_basico && digitsOnly(r.cnpj_basico).slice(0, 8)) ||
+      (r.cnpj && digitsOnly(r.cnpj).slice(0, 8)) ||
+      null;
+    if (!basico) continue;
+
+    let ordem = r.cnpj_ordem || null;
+    let dv = r.cnpj_dv || null;
+    if (pool && (!ordem || !dv)) {
+      const parts = await resolveEstabelecimentoParts(pool, basico, ordem, dv);
+      ordem = parts.ordem;
+      dv = parts.dv;
+    }
+
+    const { error: apErr } = await sb.schema(SCHEMA).from("aparicoes").insert({
+      consulta_id: event.search_id,
+      comprador_id: event.user_id,
+      cnpj_basico: basico,
+      cnpj_ordem: ordem,
+      cnpj_dv: dv,
+      nota: aparicaoNotaFromRow(r),
+      revelada: false,
+    });
+    if (!apErr) {
+      aparicoesOk += 1;
+      continue;
+    }
+    if (/duplicate|23505/i.test(apErr.message || "")) continue;
+
+    const { error: apErr2 } = await sb.schema(SCHEMA).from("aparicoes").insert({
+      consulta_id: event.search_id,
+      comprador_id: event.user_id,
+      cnpj_basico: basico,
+      cnpj_ordem: null,
+      cnpj_dv: null,
+      nota: aparicaoNotaFromRow(r),
+      revelada: false,
+    });
+    if (!apErr2) aparicoesOk += 1;
+    else if (!/duplicate|23505/i.test(apErr2.message || "")) {
+      logWarn("aparicoes", "backfill insert skipped", {
+        message: apErr2.message,
+        code: apErr2.code,
+        search_id: event.search_id,
+      });
+    }
+  }
+
+  // Atualiza resultados da consulta se veio fallback / expansão
+  if (event.params?.fallback && results.length) {
+    const canonicalResults = toCanonicalResultItems(results, event.search_id);
+    await sb
+      .schema(SCHEMA)
+      .from("consultas")
+      .update({
+        resultados: canonicalResults,
+        fallback: true,
+      })
+      .eq("id", event.search_id);
+  }
+
+  logInfo("telemetry", "backfill aparicoes apos already_persisted", {
+    search_id: event.search_id,
+    existing: count || 0,
+    inserted: aparicoesOk,
+    expected: withCnpj.length,
+  });
+
+  return {
+    backfilled: aparicoesOk > 0,
+    reason: "already_persisted",
+    aparicoes_existing: count || 0,
+    aparicoes: aparicoesOk,
+    ok: true,
+    results: toCanonicalResultItems(results, event.search_id),
+    via: "supabase-js-backfill",
+  };
 }

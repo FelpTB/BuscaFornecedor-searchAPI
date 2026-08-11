@@ -19,6 +19,7 @@ import { isSupabaseConfigured } from "./db/supabaseAdmin.js";
 import { isPgPoolConfigured } from "./db/pgPool.js";
 import { getTelemetryMode } from "./telemetry/enqueue.js";
 import { getNotificacaoMode, isNotificacaoConfigured, getNotificacaoApiBase } from "./clients/notificacaoClient.js";
+import { mergeBm25Query, resolveExactTerms } from "./search/bm25Query.js";
 
 const COLLECTION_NAME = process.env.COLLECTION_NAME;
 const ENDPOINT_SEARCH_TEXT = "POST /search/text";
@@ -580,15 +581,20 @@ async function executeSearchByText(rawBody = {}, options = {}) {
   }
 
   const bm25VectorName = process.env.QDRANT_BM25_VECTOR_NAME?.trim();
+  const exactTerms = resolveExactTerms({
+    exact_terms: body.exact_terms,
+    userQuery: query,
+  });
+  const bm25QueryProvided = typeof body.bm25_query === "string";
+  const bm25QueryNonEmpty = bm25QueryProvided && body.bm25_query.trim() !== "";
   const useBm25 =
     body.bm25 !== false &&
     Boolean(bm25VectorName) &&
-    (typeof body.bm25_query === "string" ? body.bm25_query.trim() !== "" : true);
-  const bm25_query = useBm25
-    ? (typeof body.bm25_query === "string" && body.bm25_query.trim()
-        ? body.bm25_query.trim()
-        : query)
-    : undefined;
+    (bm25QueryProvided ? bm25QueryNonEmpty || exactTerms.length > 0 : true);
+  const bm25Base = useBm25
+    ? (bm25QueryNonEmpty ? body.bm25_query.trim() : query)
+    : "";
+  const bm25_query = useBm25 ? mergeBm25Query(bm25Base, exactTerms) || undefined : undefined;
 
   const weights =
     weightsCoerced.value ??

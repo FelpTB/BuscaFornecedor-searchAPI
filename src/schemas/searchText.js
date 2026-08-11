@@ -49,6 +49,12 @@ export const searchTextInputShape = {
     .describe(
       "Termos BM25. Se omitido e BM25 estiver ativo, usa query. Envie bm25=false para desligar.",
     ),
+  exact_terms: z
+    .union([z.string().min(1), z.array(z.string().min(1))])
+    .optional()
+    .describe(
+      "Termo(s) exato(s) que DEVEM entrar na query BM25/sparse (aspas ou 'termo exato'). Sempre mesclados em bm25_query.",
+    ),
   bm25: z
     .boolean()
     .optional()
@@ -105,6 +111,18 @@ export function parseSearchTextBody(raw) {
           success: false,
           error: `Campo '${key}' não é um JSON válido`,
         };
+      }
+    }
+  }
+
+  // exact_terms: string livre OU JSON array stringificado
+  if (typeof body.exact_terms === "string") {
+    const raw = body.exact_terms.trim();
+    if (raw.startsWith("[")) {
+      try {
+        body.exact_terms = JSON.parse(raw);
+      } catch {
+        // mantém string — schema aceita string
       }
     }
   }

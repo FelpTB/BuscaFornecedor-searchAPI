@@ -10,9 +10,15 @@ const queue = [];
 let pumping = false;
 const MAX_CONCURRENCY = Number(process.env.TELEMETRY_CONCURRENCY) || 2;
 let inflight = 0;
+/** @type {Set<Promise<unknown>>} */
+const inflightPromises = new Set();
 
 export function getTelemetryMode() {
   return (process.env.TELEMETRY_MODE || "inline").trim().toLowerCase();
+}
+
+export function getTelemetryPendingCount() {
+  return queue.length + inflight;
 }
 
 /**
@@ -49,7 +55,7 @@ export function buildSearchCompletedEvent({
 
 /**
  * Enfileira sem bloquear o hot path.
- * @returns {{ queued: boolean, reason?: string }}
+ * @returns {{ queued: boolean, reason?: string, mode?: string }}
  */
 export function enqueueSearchCompleted(event) {
   const mode = getTelemetryMode();
@@ -77,14 +83,24 @@ async function runPump() {
   while (queue.length > 0 && inflight < MAX_CONCURRENCY) {
     const event = queue.shift();
     inflight += 1;
-    Promise.resolve()
+    const job = Promise.resolve()
       .then(() => persistSearchCompleted(event))
       .then((result) => {
-        logSuccess("telemetry", "search.completed persistido", {
-          search_id: event.search_id,
-          user_id: event.user_id,
-          result,
-        });
+        if (result?.skipped) {
+          logWarn("telemetry", "search.completed skipped", {
+            search_id: event.search_id,
+            user_id: event.user_id,
+            reason: result.reason,
+            backfilled: result.backfilled || false,
+            result,
+          });
+        } else {
+          logSuccess("telemetry", "search.completed persistido", {
+            search_id: event.search_id,
+            user_id: event.user_id,
+            result,
+          });
+        }
         // Comunicação: só após consulta existir no banco (API de notificação exige id_consulta).
         if (result?.ok && result.visible_on_supabase !== false) {
           const queued = enqueueRecebeConsultaAfterPersist({
@@ -123,14 +139,46 @@ async function runPump() {
       })
       .finally(() => {
         inflight -= 1;
+        inflightPromises.delete(job);
         if (queue.length > 0) pump();
       });
+    inflightPromises.add(job);
   }
   pumping = false;
   if (queue.length > 0 && inflight < MAX_CONCURRENCY) {
     pumping = true;
     setImmediate(runPump);
   }
+}
+
+/**
+ * Drena a fila in-memory no shutdown (Railway SIGTERM).
+ * @param {{ timeoutMs?: number }} [opts]
+ * @returns {Promise<{ drained: boolean, pending: number }>}
+ */
+export async function flushTelemetry({ timeoutMs = 8_000 } = {}) {
+  pump();
+  const deadline = Date.now() + Math.max(500, Number(timeoutMs) || 8_000);
+
+  while (getTelemetryPendingCount() > 0 && Date.now() < deadline) {
+    if (inflightPromises.size > 0) {
+      await Promise.race([
+        Promise.allSettled([...inflightPromises]),
+        new Promise((r) => setTimeout(r, 250)),
+      ]);
+    } else if (queue.length > 0) {
+      pump();
+      await new Promise((r) => setTimeout(r, 50));
+    } else {
+      break;
+    }
+  }
+
+  const pending = getTelemetryPendingCount();
+  if (pending > 0) {
+    logWarn("telemetry", "flush incompleto no shutdown", { pending, timeoutMs });
+  }
+  return { drained: pending === 0, pending };
 }
 
 /** Helper: enfileira após busca autenticada. */
@@ -141,7 +189,14 @@ export function maybeEnqueueFromSearch({
   source,
   session_id,
 }) {
-  if (!auth?.userId) return { queued: false, reason: "anonymous" };
+  if (!auth?.userId) {
+    logWarn("telemetry", "busca sem userId — telemetria nao enfileirada", {
+      source,
+      search_id: searchPayload?.search_id || null,
+      reason: "anonymous",
+    });
+    return { queued: false, reason: "anonymous" };
+  }
   const event = buildSearchCompletedEvent({
     search_id: searchPayload?.search_id,
     user_id: auth.userId,
@@ -152,10 +207,22 @@ export function maybeEnqueueFromSearch({
       intent: requestParams?.intent || null,
       query: requestParams?.query || requestParams?.query_text || null,
       bm25_query: requestParams?.bm25_query || null,
+      exact_terms: requestParams?.exact_terms || null,
+      parent_search_id: searchPayload?.parent_search_id || requestParams?.parent_search_id || null,
+      fallback: Boolean(requestParams?.fallback || searchPayload?.fallback),
     },
     results: searchPayload?.results || [],
     latency_ms: searchPayload?.latency_ms ?? null,
     status: "concluida",
   });
-  return enqueueSearchCompleted(event);
+  const out = enqueueSearchCompleted(event);
+  if (!out.queued) {
+    logWarn("telemetry", "enqueue recusado", {
+      source,
+      search_id: event.search_id,
+      user_id: event.user_id,
+      reason: out.reason,
+    });
+  }
+  return out;
 }

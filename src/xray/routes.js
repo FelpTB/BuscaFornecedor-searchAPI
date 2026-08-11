@@ -39,7 +39,7 @@ import { isSupabaseConfigured } from "../db/supabaseAdmin.js";
 import { probeApiKeysTable } from "../db/repositories/compradorRepo.js";
 import { AppError } from "../errors/AppError.js";
 import { forgetSession } from "./chatSessions.js";
-import { getAuthModes } from "../config/env.js";
+import { getAuthModes, getAuthMode } from "../config/env.js";
 import { createRateLimiter } from "../middleware/rateLimit.js";
 
 /**
@@ -513,6 +513,8 @@ export function createXrayRouter() {
         await assertCanSearch(auth);
       } catch (e) {
         if (e.status === 401 || e.status === 403) throw e;
+        // Fail-closed quando auth é obrigatório — não buscar anônimo sem telemetria
+        if (getAuthMode() !== "off") throw e;
         auth = null;
       }
 
@@ -568,6 +570,8 @@ export function createXrayRouter() {
         await assertCanSearch(auth);
       } catch (e) {
         if (e.status === 401 || e.status === 403) throw e;
+        if (getAuthMode() !== "off") throw e;
+        auth = null;
       }
 
       const out = await runManualToolCall({

@@ -31,6 +31,11 @@ import {
   runFallbackCascade,
   stripGeoFilter,
 } from "../src/search/fallbackSearch.js";
+import {
+  extractExactTermsFromText,
+  mergeBm25Query,
+  resolveExactTerms,
+} from "../src/search/bm25Query.js";
 
 process.env.AUTH_MODE = "off";
 process.env.QDRANT_DIMENSION_KEYS =
@@ -41,6 +46,24 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(dims.length, 5);
   assert.ok(dims.includes("produto"));
   console.log("OK config dimensions");
+}
+
+{
+  assert.deepEqual(extractExactTermsFromText('quero "parafuso naval" em SP'), ["parafuso naval"]);
+  assert.deepEqual(extractExactTermsFromText("termo exato: epóxi industrial"), ["epóxi industrial"]);
+  assert.equal(mergeBm25Query("naval inox", ["parafuso naval"]), "parafuso naval naval inox");
+  assert.equal(mergeBm25Query("parafuso naval inox", ["parafuso naval"]), "parafuso naval inox");
+  assert.deepEqual(
+    resolveExactTerms({ exact_terms: ["A"], userQuery: 'busca "B"' }),
+    ["A", "B"],
+  );
+  const parsedExact = parseSearchTextBody({
+    query: "teste",
+    exact_terms: ["termo x"],
+  });
+  assert.equal(parsedExact.success, true);
+  assert.deepEqual(parsedExact.data.exact_terms, ["termo x"]);
+  console.log("OK bm25 exact_terms helpers");
 }
 
 {
@@ -224,6 +247,30 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(mapped.toolArguments.bm25_query.includes("açaí"), false);
   assert.ok(mapped.toolArguments.queries.produto.includes("caroço"));
   console.log("OK Query Manager → search_text mapping");
+}
+
+{
+  const withExact = mapQueryManagerToToolArgs(
+    {
+      intent: "PRODUTO",
+      query_original: 'fornecedor de "parafuso naval"',
+      produtos: "parafuso naval, fixador naval",
+      servicos: "fornecimento",
+      descricao: "inox",
+      publico: "estaleiros",
+      clientes: "shipyards",
+      bm25: "naval náutico marítimo inox",
+      Modelo_Negocio: "Distribuidor",
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: "bm25_complete_profile" },
+    },
+    { userQuery: 'fornecedor de "parafuso naval"', final_limit: 10 },
+  );
+  assert.ok(withExact.toolArguments.bm25_query.toLowerCase().includes("parafuso naval"));
+  assert.deepEqual(withExact.toolArguments.exact_terms, ["parafuso naval"]);
+  console.log("OK exact_terms forçado no bm25_query");
 }
 
 {
