@@ -225,8 +225,8 @@ Comportamento:
 6. GEO na tool search_suppliers:
    - Pediu cidade/raio → city_name (+ uf se souber) + radius_km.
    - Pediu estado(s)/UF sem cidade → passe uf="SP" ou uf="SP,RJ,MG" e NÃO passe city_name (filtro Qdrant por UF).
-7. TERMO EXATO: se o usuário colocar palavra/frase entre aspas OU pedir "termo exato"/"busca exata",
-   passe exact_terms=["..."] em search_suppliers (e mantenha no briefing). Isso força o termo no BM25.
+7. TERMO EXATO / NICHO: aspas ou "termo exato" → passe exact_terms. Nicho/modelo específico
+   (ex. impressão 3D, RPG, epóxi) também ativa BM25 via Query Manager. Buscas genéricas não usam BM25.
 8. Após busca, resuma tops. Histórico/aparições gravam async no Supabase quando autenticado.
 9. Evite jargão interno (Query Manager, RRF, Fallback Vector) na conversa — fale em "busca mais geral / estadual / nacional".
 

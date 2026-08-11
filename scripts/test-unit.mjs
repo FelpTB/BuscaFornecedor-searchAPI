@@ -245,6 +245,8 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(mapped.toolArguments.filter.modelo_negocio, "Fabricante");
   assert.equal(mapped.toolArguments.filter.uf, "PA");
   assert.equal(mapped.toolArguments.bm25_query.includes("açaí"), false);
+  assert.equal(mapped.toolArguments.weights.bm25, 0.2);
+  assert.equal(mapped.query_manager.peso_bm25, 0.2);
   assert.ok(mapped.toolArguments.queries.produto.includes("caroço"));
   console.log("OK Query Manager → search_text mapping");
 }
@@ -327,6 +329,62 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(noCfg.toolArguments.bm25, undefined);
   assert.ok(noCfg.toolArguments.weights.bm25 > 0);
   console.log("OK exact_terms emite bm25_query mesmo sem vector_name no config");
+}
+
+{
+  // Nicho específico (sem aspas): qm.bm25 preenchido → peso 0.20 mesmo sem vector_name no config
+  const niche = mapQueryManagerToToolArgs(
+    {
+      intent: "MISTO",
+      query_original: "impressão 3D para jogos de tabuleiro e RPG",
+      produtos: "impressora 3D",
+      servicos: "criação de jogos",
+      descricao: "prototipagem",
+      publico: "p",
+      clientes: "c",
+      use_bm25: true,
+      bm25: "impressão 3D jogos tabuleiro RPG modelagem",
+      uf: "SP",
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: null },
+    },
+    { userQuery: "fornecedor de impressão 3D para criação de jogos de tabuleiro e RPG" },
+  );
+  assert.equal(niche.toolArguments.bm25, undefined);
+  assert.ok(niche.toolArguments.bm25_query.includes("impressão 3D"));
+  assert.equal(niche.toolArguments.weights.bm25, 0.2);
+  assert.equal(niche.query_manager.peso_bm25, 0.2);
+  assert.equal(niche.toolArguments.weights.produto, 0.3);
+  assert.equal(niche.toolArguments.weights.servico, 0.3);
+  console.log("OK nicho específico ativa BM25 com peso 0.20");
+}
+
+{
+  // Busca genérica: sem bm25 / use_bm25 → sparse off
+  const generic = mapQueryManagerToToolArgs(
+    {
+      intent: "PRODUTO",
+      query_original: "fornecedor de embalagens",
+      produtos: "embalagens",
+      servicos: "fornecimento",
+      descricao: "packaging",
+      publico: "p",
+      clientes: "c",
+      use_bm25: false,
+      bm25: "",
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: "bm25_complete_profile" },
+    },
+  );
+  assert.equal(generic.toolArguments.bm25, false);
+  assert.equal(generic.toolArguments.bm25_query, undefined);
+  assert.equal(generic.toolArguments.weights.bm25, undefined);
+  assert.equal(generic.query_manager.peso_bm25, 0);
+  console.log("OK busca genérica sem BM25");
 }
 
 {

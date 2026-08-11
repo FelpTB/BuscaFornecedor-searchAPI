@@ -215,29 +215,31 @@ impedindo que vizinhos semânticos irrelevantes dominem o resultado.
 
 OBJETIVO
 Transformar a consulta do usuário em JSON estruturado para busca híbrida dual-path.
-A API executa 2 estratégias (léxica BM25 + semântica densa) e combina (RRF). Você alimenta vetores, pesos e BM25.
+A API pode combinar busca léxica (BM25/sparse) + semântica densa (RRF).
+Você alimenta os textos densos; BM25 só quando a busca for ESPECÍFICA.
 
 PEDIDO DO USUÁRIO:
 """${userQuery}"""
 
-CONFIG DA API (dimensões reais → use nos textos; pesos serão aplicados pelo servidor):
+CONFIG DA API (dimensões reais → use nos textos; pesos densos/BM25 são aplicados pelo servidor):
 - Dimensão produto: "${dimMap.produto}"
 - Dimensão serviço: "${dimMap.servico}"
 - Dimensão descrição: "${dimMap.descricao}"
 - Dimensão público: "${dimMap.publico}"
 - Dimensão clientes: "${dimMap.cliente}"
-- BM25 na coleção: ${hasBm25 ? "SIM" : "NÃO (ainda gere bm25; o servidor pode desligar)"}
+- BM25 na coleção: ${hasBm25 ? "SIM" : "NÃO (ainda assim preencha bm25 quando a regra abaixo pedir)"}
 - final_limit sugerido: ${finalLimit}
 
-TAREFA: CLASSIFICAÇÃO DE INTENÇÃO (única decisão de peso)
+TAREFA: CLASSIFICAÇÃO DE INTENÇÃO + QUANDO USAR BM25
 
 intent = PRODUTO | SERVICO | MISTO
 
-O servidor aplica pesos FIXOS (soma 1.0):
-- bm25=0.20, descricao=0.15, publico=0.03, clientes=0.02, núcleo produto+serviço=0.60
-- PRODUTO → produtos=0.45, servicos=0.15
-- SERVICO → servicos=0.45, produtos=0.15
-- MISTO → produtos=0.30, servicos=0.30
+Pesos FIXOS no servidor (soma 1.0):
+- Sem BM25: núcleo produto+serviço absorve o 0.20 (descricao=0.15, publico=0.03, clientes=0.02)
+- Com BM25: bm25=0.20, descricao=0.15, publico=0.03, clientes=0.02, núcleo=0.60
+- PRODUTO → produtos=0.45, servicos=0.15 (com BM25) | ajustado sem BM25
+- SERVICO → servicos=0.45, produtos=0.15 (com BM25) | ajustado sem BM25
+- MISTO → produtos=0.30, servicos=0.30 (com BM25) | ajustado sem BM25
 
 Exemplos intent:
 - "açaí" → PRODUTO
@@ -246,47 +248,45 @@ Exemplos intent:
 - "limpeza industrial" → SERVICO
 - "instalação de ar condicionado" → MISTO
 
+BM25 — NÃO É OBRIGATÓRIO EM TODA BUSCA
+
+use_bm25 = true SOMENTE se:
+  A) o usuário colocou termo(s) entre aspas ("...") OU pediu "termo exato" / "busca exata"; OU
+  B) a busca cita modelo, marca, tecnologia ou NICHO específico (ex.: "impressão 3D", "RPG", "epóxi", "caroço de açaí", "parafuso naval").
+
+use_bm25 = false se a query for genérica/ampla (ex.: "fornecedor de embalagens", "material de escritório", "serviços de limpeza" sem diferenciador).
+Nesse caso: bm25 = "" (string vazia) e exact_terms = [].
+
+Quando use_bm25 = true:
+  - Preencha bm25 com APENAS termos discriminantes (sem genérico compartilhado), EXCETO termos exatos.
+  - Termos entre aspas → também em exact_terms (nunca remova o termo exato do bm25).
+  - O servidor aplica peso_bm25 = 0.20 automaticamente.
+
+Lógica discriminante (quando BM25 ligado):
+  a) Identifique o termo que torna a busca específica
+  b) Use só variações desse termo e termos técnicos exclusivos
+  c) NÃO inclua o genérico compartilhado (exceto se for termo exato entre aspas)
+Exemplos:
+- "caroço de açaí" → use_bm25=true; bm25: "caroço caroços semente sementes biomassa resíduo" (SEM "açaí")
+- "proteína bovina hidrolisada" → use_bm25=true; bm25: "hidrolisada hidrolisado colágeno peptídeo"
+- "parafuso para embarcação" → use_bm25=true; bm25: "embarcação embarcações naval náutico marítimo inox"
+- "tinta epóxi para piso industrial" → use_bm25=true; bm25: "epóxi piso industrial revestimento resistência"
+- fornecedor de "parafuso naval" → use_bm25=true; bm25 inclui "parafuso naval"; exact_terms: ["parafuso naval"]
+- "impressão 3D para jogos de tabuleiro e RPG" → use_bm25=true; bm25: "impressão 3D tabuleiro RPG modelagem prototipagem"
+- "fornecedor de embalagens em SP" → use_bm25=false; bm25: ""
+
 DIRETRIZES DE CONTEÚDO (ANTI-ERRO)
 
 1) Ancoragem de Objeto (denso): em produtos e servicos, o objeto principal deve estar em cada termo.
    Ex.: "Higienização de Big Bags", "Manutenção de Silos".
-
-2) BM25 — REGRA DISCRIMINANTE (padrão) + TERMO EXATO (override):
-   bm25 deve conter APENAS termos que DIFERENCIAM este produto/serviço de vizinhos semânticos.
-   PROIBIDO: substantivo genérico compartilhado com nichos vizinhos — EXCETO se for termo exato.
-   Lógica:
-   a) Identifique o termo que torna a busca específica
-   b) Use só variações desse termo e termos técnicos exclusivos
-   c) NÃO inclua o genérico compartilhado
-   d) TERMO EXATO: se o usuário marcar termo entre aspas ("...") OU disser "termo exato" / "busca exata",
-      esse termo DEVE estar em bm25 E em exact_terms (lista). Nunca remova termo exato.
-   Exemplos:
-   - "caroço de açaí" → bm25: "caroço caroços semente sementes biomassa resíduo" (SEM "açaí")
-   - "proteína bovina hidrolisada" → bm25: "hidrolisada hidrolisado colágeno peptídeo" (SEM "bovina"/"carne")
-   - "parafuso para embarcação" → bm25: "embarcação embarcações naval náutico marítimo inox" (SEM "parafuso")
-   - "tinta epóxi para piso industrial" → bm25: "epóxi piso industrial revestimento resistência" (SEM "tinta")
-   - usuário: fornecedor de "parafuso naval" (termo exato) → bm25 inclui "parafuso naval" + discriminantes; exact_terms: ["parafuso naval"]
-   Queries GENÉRICAS (sem diferenciador): substantivos concretos singular/plural ok
-   - "material de escritório" → bm25: "escritório papelaria papel caneta pasta"
-
-3) Foco no produto acabado — evite só matéria-prima isolada ("banco de plástico" > só "polipropileno").
-
-4) Sanitização — remova saudações, "orçamento", "teste".
-
-5) Modelo_Negocio: EXATAMENTE um de ${JSON.stringify(MODELO_NEGOCIO_ALLOWED)}.
-
-6) GEO — cidade (raio) OU UF estadual:
-   a) CIDADE / RAIO (ex.: "em Campinas", "raio 50km", "região de Curitiba/PR"):
-      - Preencha cidade_centro, uf (se souber), radius_km (default 50 se houver cidade sem raio).
-      - O servidor chama API de cidades → filter.cidade = lista no raio.
-   b) SÓ ESTADO / UF (ex.: "em SP", "no Paraná", "RJ e MG", "sudeste de SP e RJ"):
-      - cidade_centro = null, radius_km = null.
-      - uf = sigla(s) de 2 letras. Uma: "SP". Várias (OR): "SP,RJ,MG".
-      - O servidor aplica filter.uf no Qdrant (sem expandir cidades).
-   c) Sem indicação geográfica: cidade_centro/uf/radius_km = null.
-   - NÃO invente lista de cidades vizinhas — só o centro + raio quando houver cidade.
-
-7) PROIBIDO explicar fora do JSON. Retorne APENAS JSON.
+2) Foco no produto acabado — evite só matéria-prima isolada.
+3) Sanitização — remova saudações, "orçamento", "teste".
+4) Modelo_Negocio: EXATAMENTE um de ${JSON.stringify(MODELO_NEGOCIO_ALLOWED)}.
+5) GEO — cidade (raio) OU UF estadual:
+   a) CIDADE / RAIO: cidade_centro, uf (se souber), radius_km (default 50).
+   b) SÓ ESTADO / UF: cidade_centro=null, radius_km=null, uf="SP" ou "SP,RJ,MG".
+   c) Sem geo: cidade_centro/uf/radius_km = null.
+6) PROIBIDO explicar fora do JSON. Retorne APENAS JSON.
 
 SCHEMA DE SAÍDA
 {
@@ -298,8 +298,9 @@ SCHEMA DE SAÍDA
   "descricao": "processos e diferenciais técnicos",
   "publico": "string",
   "clientes": "string",
-  "bm25": "APENAS termos discriminantes (sem genérico compartilhado), EXCETO termos exatos",
-  "exact_terms": ["termo marcado pelo usuário ou []"],
+  "use_bm25": true,
+  "bm25": "termos discriminantes OU string vazia se use_bm25=false",
+  "exact_terms": ["termo entre aspas ou []"],
   "Modelo_Negocio": "um dos valores permitidos",
   "cidade_centro": "string|null",
   "uf": "sigla UF ou lista CSV (ex. SP ou SP,RJ)|null",
@@ -317,7 +318,6 @@ SCHEMA DE SAÍDA
  */
 export function mapQueryManagerToToolArgs(qm, config, options = {}) {
   const dimMap = resolveDimMap(config.dimension_keys);
-  const hasBm25 = Boolean(config.bm25?.vector_name);
   const intent = normalizeIntent(qm.intent);
 
   const queries = {};
@@ -341,15 +341,20 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
     userQuery: options.userQuery || query,
   });
 
-  // QM pode devolver bm25:false mesmo com exact_terms — termo exato sempre força sparse.
+  // BM25 condicional: aspas/termo exato OU nicho específico (QM preencheu bm25 / use_bm25).
+  // Não depende de config.bm25.vector_name para peso — o servidor liga o sparse se o env tiver o vetor.
   const qmDisabledBm25 = qm.bm25 === false || qm.bm25 === "false";
   const qmBm25Text =
     typeof qm.bm25 === "string" && qm.bm25.trim() && !qmDisabledBm25
       ? qm.bm25.trim()
       : "";
+  const qmWantsBm25 =
+    qm.use_bm25 === true ||
+    qm.use_bm25 === "true" ||
+    qm.use_bm25 === 1 ||
+    qm.use_bm25 === "1";
   const includeBm25 =
-    (hasBm25 && (!qmDisabledBm25 || exactTerms.length > 0)) ||
-    exactTerms.length > 0;
+    exactTerms.length > 0 || Boolean(qmBm25Text) || qmWantsBm25;
   const weights = buildFixedWeights(intent, dimMap, includeBm25);
 
   const filter = {};
@@ -414,6 +419,7 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
       clientes: qm.clientes ?? null,
       bm25: qmBm25Text || (qm.bm25 ?? null),
       exact_terms: exactTerms.length ? exactTerms : null,
+      use_bm25: includeBm25,
       Modelo_Negocio: modelo,
       cidade_centro: qm.cidade_centro ?? qm.cidade ?? null,
       uf: ufFilter,
