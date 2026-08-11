@@ -507,6 +507,27 @@ function buildEqualWeights(dimensionKeys, includeBm25 = false) {
   return weights;
 }
 
+/** Se BM25 está ativo mas weights vieram sem chave bm25, injeta 0.20 e escala densos. */
+function ensureBm25Weight(weights, dimensionKeys, bm25Share = 0.2) {
+  if (!weights || typeof weights !== "object") return null;
+  if (weights.bm25 != null && !Number.isNaN(Number(weights.bm25))) return weights;
+  const share = Number.isFinite(bm25Share) && bm25Share > 0 && bm25Share < 1 ? bm25Share : 0.2;
+  const denseSum = dimensionKeys.reduce((a, k) => a + Number(weights[k] || 0), 0);
+  if (denseSum <= 0) return buildEqualWeights(dimensionKeys, true);
+  const scale = (1 - share) / denseSum;
+  const out = {};
+  for (const k of dimensionKeys) {
+    out[k] = Number((Number(weights[k] || 0) * scale).toFixed(6));
+  }
+  out.bm25 = share;
+  const sum = Object.values(out).reduce((a, b) => a + b, 0);
+  const delta = Number((1 - sum).toFixed(6));
+  if (Math.abs(delta) > 0) {
+    out[dimensionKeys[0]] = Number((out[dimensionKeys[0]] + delta).toFixed(6));
+  }
+  return out;
+}
+
 function getEmbedDimensionsForCollection(collection, body) {
   if (body?.embed_dimensions != null) {
     const n = Number(body.embed_dimensions);
@@ -585,20 +606,25 @@ async function executeSearchByText(rawBody = {}, options = {}) {
     exact_terms: body.exact_terms,
     userQuery: query,
   });
+  const forceBm25 = exactTerms.length > 0;
   const bm25QueryProvided = typeof body.bm25_query === "string";
   const bm25QueryNonEmpty = bm25QueryProvided && body.bm25_query.trim() !== "";
+  // exact_terms sempre ligam BM25 (ignoram bm25:false do cliente), se o vetor esparso existir
   const useBm25 =
-    body.bm25 !== false &&
+    (body.bm25 !== false || forceBm25) &&
     Boolean(bm25VectorName) &&
-    (bm25QueryProvided ? bm25QueryNonEmpty || exactTerms.length > 0 : true);
+    (bm25QueryProvided ? bm25QueryNonEmpty || forceBm25 : true);
   const bm25Base = useBm25
     ? (bm25QueryNonEmpty ? body.bm25_query.trim() : query)
     : "";
   const bm25_query = useBm25 ? mergeBm25Query(bm25Base, exactTerms) || undefined : undefined;
 
-  const weights =
+  let weights =
     weightsCoerced.value ??
     buildEqualWeights(dimensionKeys, Boolean(bm25_query));
+  if (bm25_query) {
+    weights = ensureBm25Weight(weights, dimensionKeys) || weights;
+  }
 
   const limit_per_vector = clampLimit(
     body.limit_per_vector,

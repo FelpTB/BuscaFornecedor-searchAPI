@@ -319,8 +319,6 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
   const dimMap = resolveDimMap(config.dimension_keys);
   const hasBm25 = Boolean(config.bm25?.vector_name);
   const intent = normalizeIntent(qm.intent);
-  const includeBm25 = hasBm25 && qm.bm25 !== false;
-  const weights = buildFixedWeights(intent, dimMap, includeBm25);
 
   const queries = {};
   const put = (apiKey, text) => {
@@ -337,6 +335,22 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
     options.userQuery ||
     Object.values(queries)[0] ||
     "";
+
+  const exactTerms = resolveExactTerms({
+    exact_terms: options.exact_terms ?? qm.exact_terms,
+    userQuery: options.userQuery || query,
+  });
+
+  // QM pode devolver bm25:false mesmo com exact_terms — termo exato sempre força sparse.
+  const qmDisabledBm25 = qm.bm25 === false || qm.bm25 === "false";
+  const qmBm25Text =
+    typeof qm.bm25 === "string" && qm.bm25.trim() && !qmDisabledBm25
+      ? qm.bm25.trim()
+      : "";
+  const includeBm25 =
+    (hasBm25 && (!qmDisabledBm25 || exactTerms.length > 0)) ||
+    exactTerms.length > 0;
+  const weights = buildFixedWeights(intent, dimMap, includeBm25);
 
   const filter = {};
   const modelo = pickModeloNegocio(qm.Modelo_Negocio ?? qm.modelo_negocio);
@@ -363,11 +377,6 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
     if (singleCity) filter.cidade = singleCity;
   }
 
-  const exactTerms = resolveExactTerms({
-    exact_terms: options.exact_terms ?? qm.exact_terms,
-    userQuery: options.userQuery || query,
-  });
-
   const toolArguments = {
     query,
     weights,
@@ -385,9 +394,7 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
   if (exactTerms.length) toolArguments.exact_terms = exactTerms;
 
   if (includeBm25) {
-    const bm25Base =
-      typeof qm.bm25 === "string" && qm.bm25.trim() ? qm.bm25.trim() : query;
-    toolArguments.bm25_query = mergeBm25Query(bm25Base, exactTerms);
+    toolArguments.bm25_query = mergeBm25Query(qmBm25Text || query, exactTerms);
   } else {
     toolArguments.bm25 = false;
   }
@@ -405,7 +412,7 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
       descricao: qm.descricao ?? null,
       publico: qm.publico ?? null,
       clientes: qm.clientes ?? null,
-      bm25: qm.bm25 ?? null,
+      bm25: qmBm25Text || (qm.bm25 ?? null),
       exact_terms: exactTerms.length ? exactTerms : null,
       Modelo_Negocio: modelo,
       cidade_centro: qm.cidade_centro ?? qm.cidade ?? null,

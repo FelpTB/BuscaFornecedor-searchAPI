@@ -270,7 +270,63 @@ process.env.QDRANT_DIMENSION_KEYS =
   );
   assert.ok(withExact.toolArguments.bm25_query.toLowerCase().includes("parafuso naval"));
   assert.deepEqual(withExact.toolArguments.exact_terms, ["parafuso naval"]);
+  assert.equal(withExact.toolArguments.bm25, undefined);
+  assert.ok(withExact.toolArguments.weights.bm25 > 0);
   console.log("OK exact_terms forçado no bm25_query");
+}
+
+{
+  // QM desligou bm25, mas exact_terms devem forçar sparse + peso
+  const forced = mapQueryManagerToToolArgs(
+    {
+      intent: "SERVICO",
+      query_original: 'editora "Jogos De Tabuleiro" e "RPG"',
+      produtos: "jogos",
+      servicos: "produção de livros",
+      descricao: "editorial",
+      publico: "p",
+      clientes: "c",
+      bm25: false,
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: "bm25_complete_profile" },
+    },
+    {
+      userQuery: 'quero serviços de "Jogos De Tabuleiro" e "RPG"',
+      exact_terms: ["Jogos De Tabuleiro", "RPG"],
+    },
+  );
+  assert.equal(forced.toolArguments.bm25, undefined);
+  assert.ok(forced.toolArguments.bm25_query.includes("Jogos De Tabuleiro"));
+  assert.ok(forced.toolArguments.bm25_query.includes("RPG"));
+  assert.equal(forced.toolArguments.weights.bm25, 0.2);
+  console.log("OK exact_terms override bm25:false do QM");
+}
+
+{
+  // Sem vector_name no config: ainda emite bm25_query (servidor decide pelo env)
+  const noCfg = mapQueryManagerToToolArgs(
+    {
+      intent: "PRODUTO",
+      query_original: 'x "termo"',
+      produtos: "x",
+      servicos: "y",
+      descricao: "d",
+      publico: "p",
+      clientes: "c",
+      bm25: false,
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: null },
+    },
+    { userQuery: 'busca "termo"' },
+  );
+  assert.ok(noCfg.toolArguments.bm25_query.includes("termo"));
+  assert.equal(noCfg.toolArguments.bm25, undefined);
+  assert.ok(noCfg.toolArguments.weights.bm25 > 0);
+  console.log("OK exact_terms emite bm25_query mesmo sem vector_name no config");
 }
 
 {
