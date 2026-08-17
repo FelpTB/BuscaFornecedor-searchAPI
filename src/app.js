@@ -70,9 +70,9 @@ export function createApp() {
     });
   });
 
-  if (isXrayEnabled()) {
-    app.use(createXrayRouter());
-  }
+  // Chat do agente (`/search/xray/chat`) é o backend da UI — sempre montado.
+  // XRAY_ENABLED=0 só esconde o harness HTML; não derruba o produto.
+  app.use(createXrayRouter());
   app.use(createApiRouter());
   mountMcp(app, { executeSearchByText, getPublicConfig });
 
