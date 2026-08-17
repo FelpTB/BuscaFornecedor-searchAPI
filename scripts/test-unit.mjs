@@ -454,6 +454,37 @@ process.env.QDRANT_DIMENSION_KEYS =
 }
 
 {
+  const samsung = "Preciso de um fornecedor para o celular Samsung S10";
+  const spec = detectQuerySpecificity(samsung);
+  assert.equal(spec.specific, true);
+  assert.ok(
+    spec.terms.some((t) => /samsung/i.test(t) && /s10/i.test(t)),
+    `esperava Samsung S10 em ${JSON.stringify(spec.terms)}`,
+  );
+  const mapped = mapQueryManagerToToolArgs(
+    {
+      intent: "PRODUTO",
+      query_original: "fornecedor de celular",
+      produtos: "smartphone",
+      servicos: "fornecimento",
+      descricao: "aparelhos",
+      publico: "varejo",
+      clientes: "lojas",
+      use_bm25: false,
+      bm25: "",
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: "bm25_complete_profile" },
+    },
+    { userQuery: samsung, final_limit: 10 },
+  );
+  assert.equal(mapped.query_manager.use_bm25, true);
+  assert.match(mapped.toolArguments.queries.produto, /Samsung S10/i);
+  console.log("OK Samsung S10 ancora termo no texto de produto");
+}
+
+{
   // Busca genérica: sem bm25 / use_bm25 → sparse off
   const generic = mapQueryManagerToToolArgs(
     {

@@ -354,6 +354,17 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
   });
   const specificity = detectQuerySpecificity(userText);
 
+  if (exactTerms.length) {
+    const extra = exactTerms.join(", ");
+    const key = dimMap.produto;
+    const current = typeof queries[key] === "string" ? queries[key] : "";
+    if (!current) {
+      queries[key] = extra;
+    } else if (!current.toLowerCase().includes(extra.toLowerCase())) {
+      queries[key] = `${current}, ${extra}`;
+    }
+  }
+
   // BM25: aspas / termo extraído (modelo, marca, SKU) / nicho do QM / cue "especificamente".
   // Código prevalece se o LLM classificar um modelo específico como busca genérica.
   const qmDisabledBm25 = qm.bm25 === false || qm.bm25 === "false";

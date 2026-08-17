@@ -1,4 +1,5 @@
 import qdrantClient from "./qdrantClient.js";
+import { logWarn } from "./logger.js";
 
 const RRF_K = 10;
 
@@ -237,7 +238,15 @@ export async function multiVectorSearch({
 
   // Stage 1: Fetch BM25 + Dense full bank in parallel
   const bm25Promise = useBm25
-    ? fetchBm25(collection, bm25Query, bm25VectorName, 200, filter)
+    ? fetchBm25(collection, bm25Query, bm25VectorName, 200, filter).catch((err) => {
+        logWarn("multiVectorSearch", "BM25/sparse falhou; segue busca densa", {
+          vector: bm25VectorName,
+          query_preview: String(bm25Query).slice(0, 80),
+          error_message: err?.message || String(err),
+          error_status: err?.status ?? err?.statusCode,
+        });
+        return { byId: {}, idList: [], count: 0 };
+      })
     : Promise.resolve({ byId: {}, idList: [], count: 0 });
 
   const denseFullPromise = fetchDenseAll(
