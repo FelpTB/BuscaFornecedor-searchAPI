@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { fetchCitiesNearby } from "../clients/citiesApi.js";
-import { mergeBm25Query, resolveExactTerms } from "../search/bm25Query.js";
+import { detectQuerySpecificity, mergeBm25Query, resolveExactTerms } from "../search/bm25Query.js";
 
 /**
  * Pré-proxy X-Ray = Query Manager B2B + bridge para tool MCP search_text.
@@ -248,14 +248,23 @@ Exemplos intent:
 - "limpeza industrial" → SERVICO
 - "instalação de ar condicionado" → MISTO
 
-BM25 — NÃO É OBRIGATÓRIO EM TODA BUSCA
+BM25 — NÃO É OBRIGATÓRIO EM TODA BUSCA, MAS É OBRIGATÓRIO SE HOUVER ESPECIFICIDADE
 
-use_bm25 = true SOMENTE se:
-  A) o usuário colocou termo(s) entre aspas ("...") OU pediu "termo exato" / "busca exata"; OU
-  B) a busca cita modelo, marca, tecnologia ou NICHO específico (ex.: "impressão 3D", "RPG", "epóxi", "caroço de açaí", "parafuso naval").
+use_bm25 = true se QUALQUER um destes:
+  A) aspas ("...") OU "termo exato" / "busca exata" / "especificamente" / "específico";
+  B) cita MODELO, MARCA, SKU, referência, geração ou código
+     (ex.: Xiaomi Redmi Note 10, iPhone 16 Pro, iPhone 15, ISO 9001);
+  C) nicho técnico (ex.: "impressão 3D", "RPG", "epóxi", "caroço de açaí", "parafuso naval").
 
-use_bm25 = false se a query for genérica/ampla (ex.: "fornecedor de embalagens", "material de escritório", "serviços de limpeza" sem diferenciador).
-Nesse caso: bm25 = "" (string vazia) e exact_terms = [].
+NÃO classifique como genérica só porque a região é nacional/estadual ou o texto começa com "preciso de um fornecedor".
+"celular Xiaomi modelo Redmi Note 10 especificamente, nacional" → use_bm25=true;
+exact_terms: ["Redmi Note 10", "Xiaomi"]; bm25 inclui esses termos.
+"Preciso de um fornecedor, para iphone, mais especificamente o iphone 16 pro" → use_bm25=true;
+exact_terms: ["iPhone 16 Pro", "iPhone"]; bm25: "iPhone 16 Pro smartphone".
+
+use_bm25 = false SOMENTE se a query for genérica/ampla SEM marca/modelo/SKU
+(ex.: "fornecedor de embalagens", "material de escritório", "serviços de limpeza").
+Nesse caso: bm25 = "" e exact_terms = [].
 
 Quando use_bm25 = true:
   - Preencha bm25 com APENAS termos discriminantes (sem genérico compartilhado), EXCETO termos exatos.
@@ -273,6 +282,8 @@ Exemplos:
 - "tinta epóxi para piso industrial" → use_bm25=true; bm25: "epóxi piso industrial revestimento resistência"
 - fornecedor de "parafuso naval" → use_bm25=true; bm25 inclui "parafuso naval"; exact_terms: ["parafuso naval"]
 - "impressão 3D para jogos de tabuleiro e RPG" → use_bm25=true; bm25: "impressão 3D tabuleiro RPG modelagem prototipagem"
+- "celular Xiaomi modelo Redmi Note 10 especificamente" → use_bm25=true; exact_terms: ["Redmi Note 10","Xiaomi"]; bm25: "Xiaomi Redmi Note 10 smartphone"
+- "Preciso de um fornecedor, para iphone, mais especificamente o iphone 16 pro" → use_bm25=true; exact_terms: ["iPhone 16 Pro","iPhone"]; bm25: "iPhone 16 Pro smartphone"
 - "fornecedor de embalagens em SP" → use_bm25=false; bm25: ""
 
 DIRETRIZES DE CONTEÚDO (ANTI-ERRO)
@@ -336,13 +347,15 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
     Object.values(queries)[0] ||
     "";
 
+  const userText = options.userQuery || query;
   const exactTerms = resolveExactTerms({
     exact_terms: options.exact_terms ?? qm.exact_terms,
-    userQuery: options.userQuery || query,
+    userQuery: userText,
   });
+  const specificity = detectQuerySpecificity(userText);
 
-  // BM25 condicional: aspas/termo exato OU nicho específico (QM preencheu bm25 / use_bm25).
-  // Não depende de config.bm25.vector_name para peso — o servidor liga o sparse se o env tiver o vetor.
+  // BM25: aspas / termo extraído (modelo, marca, SKU) / nicho do QM / cue "especificamente".
+  // Código prevalece se o LLM classificar um modelo específico como busca genérica.
   const qmDisabledBm25 = qm.bm25 === false || qm.bm25 === "false";
   const qmBm25Text =
     typeof qm.bm25 === "string" && qm.bm25.trim() && !qmDisabledBm25
@@ -354,7 +367,10 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
     qm.use_bm25 === 1 ||
     qm.use_bm25 === "1";
   const includeBm25 =
-    exactTerms.length > 0 || Boolean(qmBm25Text) || qmWantsBm25;
+    exactTerms.length > 0 ||
+    Boolean(qmBm25Text) ||
+    qmWantsBm25 ||
+    specificity.specific;
   const weights = buildFixedWeights(intent, dimMap, includeBm25);
 
   const filter = {};
@@ -399,7 +415,9 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
   if (exactTerms.length) toolArguments.exact_terms = exactTerms;
 
   if (includeBm25) {
-    toolArguments.bm25_query = mergeBm25Query(qmBm25Text || query, exactTerms);
+    const lexicalCore =
+      qmBm25Text || (specificity.terms.length ? specificity.terms.join(" ") : query);
+    toolArguments.bm25_query = mergeBm25Query(lexicalCore, exactTerms);
   } else {
     toolArguments.bm25 = false;
   }
@@ -417,7 +435,7 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
       descricao: qm.descricao ?? null,
       publico: qm.publico ?? null,
       clientes: qm.clientes ?? null,
-      bm25: qmBm25Text || (qm.bm25 ?? null),
+      bm25: includeBm25 ? toolArguments.bm25_query : qmBm25Text || (qm.bm25 ?? null),
       exact_terms: exactTerms.length ? exactTerms : null,
       use_bm25: includeBm25,
       Modelo_Negocio: modelo,

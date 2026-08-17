@@ -19,7 +19,7 @@ import { isSupabaseConfigured } from "./db/supabaseAdmin.js";
 import { isPgPoolConfigured } from "./db/pgPool.js";
 import { getTelemetryMode } from "./telemetry/enqueue.js";
 import { getNotificacaoMode, isNotificacaoConfigured, getNotificacaoApiBase } from "./clients/notificacaoClient.js";
-import { mergeBm25Query, resolveExactTerms } from "./search/bm25Query.js";
+import { mergeBm25Query, resolveExactTerms, detectQuerySpecificity } from "./search/bm25Query.js";
 
 const COLLECTION_NAME = process.env.COLLECTION_NAME;
 const ENDPOINT_SEARCH_TEXT = "POST /search/text";
@@ -606,7 +606,8 @@ async function executeSearchByText(rawBody = {}, options = {}) {
     exact_terms: body.exact_terms,
     userQuery: query,
   });
-  const forceBm25 = exactTerms.length > 0;
+  const specificity = detectQuerySpecificity(query);
+  const forceBm25 = exactTerms.length > 0 || specificity.specific;
   const bm25QueryProvided = typeof body.bm25_query === "string";
   const bm25QueryNonEmpty = bm25QueryProvided && body.bm25_query.trim() !== "";
   // exact_terms sempre ligam BM25 (ignoram bm25:false do cliente), se o vetor esparso existir

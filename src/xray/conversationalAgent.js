@@ -7,6 +7,7 @@ import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import { fetchCitiesNearby } from "../clients/citiesApi.js";
 import { planSearchToolCall, normalizeUfList, formatUfFilterValue } from "./searchAgent.js";
+import { resolveExactTerms } from "../search/bm25Query.js";
 import { runFallbackCascade } from "../search/fallbackSearch.js";
 import {
   mapResultsForDisplay,
@@ -160,7 +161,7 @@ export const CHAT_TOOLS = [
             type: "array",
             items: { type: "string" },
             description:
-              "Termos exatos que o usuário pediu (entre aspas ou 'termo exato'). Vão obrigatoriamente para BM25/sparse.",
+              "Termos exatos de marca/modelo/SKU (ex.: iPhone 16 Pro). Extraia do briefing mesmo sem aspas. Vão obrigatoriamente para BM25/sparse.",
           },
         },
         required: ["briefing"],
@@ -225,8 +226,11 @@ Comportamento:
 6. GEO na tool search_suppliers:
    - Pediu cidade/raio → city_name (+ uf se souber) + radius_km.
    - Pediu estado(s)/UF sem cidade → passe uf="SP" ou uf="SP,RJ,MG" e NÃO passe city_name (filtro Qdrant por UF).
-7. TERMO EXATO / NICHO: aspas ou "termo exato" → passe exact_terms. Nicho/modelo específico
-   (ex. impressão 3D, RPG, epóxi) também ativa BM25 via Query Manager. Buscas genéricas não usam BM25.
+7. TERMO EXATO / MODELO / MARCA: aspas, "especificamente", "modelo X", "marca Y", SKU,
+   geração ou código (Xiaomi Redmi Note 10, iPhone 16 Pro) → passe exact_terms com o
+   modelo/marca completo (ex.: ["iPhone 16 Pro"]). NÃO trate isso como busca genérica
+   só porque a região é nacional. Buscas amplas sem marca/modelo (ex. "embalagens em SP")
+   seguem sem exact_terms.
 8. Após busca, resuma tops. Histórico/aparições gravam async no Supabase quando autenticado.
 9. Evite jargão interno (Query Manager, RRF, Fallback Vector) na conversa — fale em "busca mais geral / estadual / nacional".
 
@@ -540,11 +544,14 @@ async function executeTool(name, args, ctx) {
         debug: args.debug === true || defaults.debug === true,
         rerank: args.rerank === true || defaults.rerank === true,
         geo: Object.keys(geo).length ? geo : undefined,
-        exact_terms: Array.isArray(args.exact_terms)
-          ? args.exact_terms
-          : typeof args.exact_terms === "string"
+        exact_terms: resolveExactTerms({
+          exact_terms: Array.isArray(args.exact_terms)
             ? args.exact_terms
-            : undefined,
+            : typeof args.exact_terms === "string"
+              ? args.exact_terms
+              : undefined,
+          userQuery: briefing,
+        }),
       });
       const searchStarted = Date.now();
       const search = await executeSearchByText(plan.mcp_tool_call.arguments, {

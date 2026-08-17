@@ -32,6 +32,7 @@ import {
   stripGeoFilter,
 } from "../src/search/fallbackSearch.js";
 import {
+  detectQuerySpecificity,
   extractExactTermsFromText,
   mergeBm25Query,
   resolveExactTerms,
@@ -359,6 +360,97 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(niche.toolArguments.weights.produto, 0.3);
   assert.equal(niche.toolArguments.weights.servico, 0.3);
   console.log("OK nicho específico ativa BM25 com peso 0.20");
+}
+
+{
+  const xiaomi =
+    "preciso de um fornecedor para celular xiaomi modelo redmi note 10 específicamente, pode ser a nível nacional";
+  const spec = detectQuerySpecificity(xiaomi);
+  assert.equal(spec.specific, true);
+  assert.ok(spec.cues.includes("especificamente"));
+  const foldedTerms = spec.terms.map((t) => t.toLowerCase());
+  assert.ok(foldedTerms.some((t) => t.includes("redmi") && t.includes("10")));
+  assert.ok(foldedTerms.some((t) => t.includes("xiaomi")));
+  const resolved = resolveExactTerms({ userQuery: xiaomi });
+  assert.ok(resolved.some((t) => /redmi/i.test(t)));
+
+  const genericSpec = detectQuerySpecificity("fornecedor de embalagens em SP");
+  assert.equal(genericSpec.specific, false);
+  assert.equal(genericSpec.terms.length, 0);
+  console.log("OK specificity detector (modelo + especificamente)");
+}
+
+{
+  // QM classificou como genérica, mas o texto tem marca+modelo — código força BM25
+  const xiaomiQuery =
+    "preciso de um fornecedor para celular xiaomi modelo redmi note 10 específicamente, pode ser a nível nacional";
+  const forcedModel = mapQueryManagerToToolArgs(
+    {
+      intent: "PRODUTO",
+      query_original: "fornecedor celular Xiaomi modelo Redmi Note 10",
+      produtos: "celular, Xiaomi, Redmi Note 10",
+      servicos: "fornecimento",
+      descricao: "garantia",
+      publico: "consumidores",
+      clientes: "varejistas",
+      use_bm25: false,
+      bm25: "",
+      Modelo_Negocio: "Distribuidor",
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: "bm25_complete_profile" },
+    },
+    { userQuery: xiaomiQuery, final_limit: 10 },
+  );
+  assert.equal(forcedModel.toolArguments.bm25, undefined);
+  assert.ok(forcedModel.toolArguments.bm25_query);
+  assert.match(forcedModel.toolArguments.bm25_query, /redmi/i);
+  assert.ok(forcedModel.toolArguments.exact_terms?.some((t) => /redmi/i.test(t)));
+  assert.equal(forcedModel.toolArguments.weights.bm25, 0.2);
+  assert.equal(forcedModel.query_manager.use_bm25, true);
+  console.log("OK modelo específico força BM25 mesmo com QM genérico");
+}
+
+{
+  const iphone =
+    "Preciso de um fornecedor, para iphone, mais especificamente o iphone 16 pro";
+  const spec = detectQuerySpecificity(iphone);
+  assert.equal(spec.specific, true);
+  assert.ok(spec.cues.includes("especificamente"));
+  const folded = spec.terms.map((t) => t.toLowerCase());
+  assert.ok(
+    folded.some((t) => t.includes("iphone") && t.includes("16") && t.includes("pro")),
+    `esperava "iphone 16 pro" em ${JSON.stringify(spec.terms)}`,
+  );
+  const resolved = resolveExactTerms({ userQuery: iphone });
+  assert.ok(resolved.some((t) => /iphone\s+16\s+pro/i.test(t)));
+
+  const forcedIphone = mapQueryManagerToToolArgs(
+    {
+      intent: "PRODUTO",
+      query_original: "fornecedor de iphone",
+      produtos: "smartphone, iPhone",
+      servicos: "fornecimento",
+      descricao: "aparelhos",
+      publico: "varejo",
+      clientes: "lojas",
+      use_bm25: false,
+      bm25: "",
+      Modelo_Negocio: "Distribuidor",
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: "bm25_complete_profile" },
+    },
+    { userQuery: iphone, final_limit: 10 },
+  );
+  assert.equal(forcedIphone.toolArguments.bm25, undefined);
+  assert.match(forcedIphone.toolArguments.bm25_query, /iphone\s+16\s+pro/i);
+  assert.ok(forcedIphone.toolArguments.exact_terms?.some((t) => /iphone\s+16\s+pro/i.test(t)));
+  assert.equal(forcedIphone.toolArguments.weights.bm25, 0.2);
+  assert.equal(forcedIphone.query_manager.use_bm25, true);
+  console.log("OK iPhone 16 Pro força BM25 e exact_terms");
 }
 
 {
