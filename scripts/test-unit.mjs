@@ -36,6 +36,7 @@ import {
   extractExactTermsFromText,
   mergeBm25Query,
   resolveExactTerms,
+  stripBm25Weight,
 } from "../src/search/bm25Query.js";
 
 process.env.AUTH_MODE = "off";
@@ -65,6 +66,18 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(parsedExact.success, true);
   assert.deepEqual(parsedExact.data.exact_terms, ["termo x"]);
   console.log("OK bm25 exact_terms helpers");
+}
+
+{
+  const stripped = stripBm25Weight(
+    { produto: 0.45, servico: 0.15, descricao: 0.15, publico: 0.03, cliente: 0.02, bm25: 0.2 },
+    ["produto", "servico", "descricao", "publico", "cliente"],
+  );
+  assert.equal(stripped.bm25, undefined);
+  const sum = Object.values(stripped).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(sum - 1) < 1e-6, `sum=${sum}`);
+  assert.ok(stripped.produto > 0.45);
+  console.log("OK stripBm25Weight reescala densos para 1.0");
 }
 
 {

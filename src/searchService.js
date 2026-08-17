@@ -19,7 +19,7 @@ import { isSupabaseConfigured } from "./db/supabaseAdmin.js";
 import { isPgPoolConfigured } from "./db/pgPool.js";
 import { getTelemetryMode } from "./telemetry/enqueue.js";
 import { getNotificacaoMode, isNotificacaoConfigured, getNotificacaoApiBase } from "./clients/notificacaoClient.js";
-import { mergeBm25Query, resolveExactTerms, detectQuerySpecificity } from "./search/bm25Query.js";
+import { mergeBm25Query, resolveExactTerms, detectQuerySpecificity, stripBm25Weight } from "./search/bm25Query.js";
 
 const COLLECTION_NAME = process.env.COLLECTION_NAME;
 const ENDPOINT_SEARCH_TEXT = "POST /search/text";
@@ -625,6 +625,8 @@ async function executeSearchByText(rawBody = {}, options = {}) {
     buildEqualWeights(dimensionKeys, Boolean(bm25_query));
   if (bm25_query) {
     weights = ensureBm25Weight(weights, dimensionKeys) || weights;
+  } else {
+    weights = stripBm25Weight(weights, dimensionKeys) || weights;
   }
 
   const limit_per_vector = clampLimit(

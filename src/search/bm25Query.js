@@ -276,3 +276,39 @@ export function resolveExactTerms(sources = {}) {
   const fromSpec = detectQuerySpecificity(text).terms;
   return normalizeExactTerms([...fromField, ...fromQuotes, ...fromSpec]);
 }
+
+/**
+ * Quando o vetor sparse não está configurado, remove bm25 dos pesos e
+ * reescala as dimensões densas para soma 1.0.
+ * @param {Record<string, number>|null|undefined} weights
+ * @param {string[]} dimensionKeys
+ * @returns {Record<string, number>|null}
+ */
+export function stripBm25Weight(weights, dimensionKeys) {
+  if (!weights || typeof weights !== "object" || !Array.isArray(dimensionKeys) || !dimensionKeys.length) {
+    return null;
+  }
+  if (weights.bm25 == null) return weights;
+  const out = {};
+  let denseSum = 0;
+  for (const k of dimensionKeys) {
+    const v = Number(weights[k] || 0);
+    out[k] = v;
+    denseSum += v;
+  }
+  if (denseSum <= 0) {
+    const eq = 1 / dimensionKeys.length;
+    for (const k of dimensionKeys) out[k] = eq;
+    return out;
+  }
+  const scale = 1 / denseSum;
+  for (const k of dimensionKeys) {
+    out[k] = Number((out[k] * scale).toFixed(6));
+  }
+  const sum = Object.values(out).reduce((a, b) => a + b, 0);
+  const delta = Number((1 - sum).toFixed(6));
+  if (Math.abs(delta) > 0) {
+    out[dimensionKeys[0]] = Number((out[dimensionKeys[0]] + delta).toFixed(6));
+  }
+  return out;
+}
