@@ -14,6 +14,7 @@ import {
   normalizeUfList,
   formatUfFilterValue,
   QM_FIXED,
+  zeroWeightsWithoutQueries,
 } from "../src/xray/searchAgent.js";
 import { CHAT_TOOLS } from "../src/xray/conversationalAgent.js";
 import {
@@ -233,6 +234,53 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(wM.produto, 0.3);
   assert.equal(wM.servico, 0.3);
   console.log("OK Query Manager fixed weights");
+}
+
+{
+  const dimMap = resolveDimMap(["produto", "servico", "descricao", "publico", "cliente"]);
+  const raw = buildFixedWeights("PRODUTO", dimMap, false);
+  const z = zeroWeightsWithoutQueries(
+    raw,
+    { produto: "embalagens plásticas", descricao: "fabricante de embalagens" },
+    { includeBm25: false },
+  );
+  assert.ok(z.produto > 0);
+  assert.ok(z.descricao > 0);
+  assert.equal(z.servico, 0);
+  assert.equal(z.publico, 0);
+  assert.equal(z.cliente, 0);
+  assert.equal(z.bm25, undefined);
+  const sumZ = Object.values(z).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(sumZ - 1) < 1e-6, `sum=${sumZ}`);
+
+  const mappedEmpty = mapQueryManagerToToolArgs(
+    {
+      intent: "PRODUTO",
+      query_original: "embalagens plásticas em Campinas",
+      produtos: "embalagens plásticas",
+      servicos: "",
+      descricao: "fabricante de embalagens",
+      publico: null,
+      clientes: "   ",
+      use_bm25: false,
+      bm25: "",
+    },
+    {
+      dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"],
+      bm25: { vector_name: "bm25_complete_profile" },
+    },
+  );
+  assert.equal(mappedEmpty.toolArguments.queries.servico, undefined);
+  assert.equal(mappedEmpty.toolArguments.queries.publico, undefined);
+  assert.equal(mappedEmpty.toolArguments.queries.cliente, undefined);
+  assert.equal(mappedEmpty.toolArguments.weights.servico, 0);
+  assert.equal(mappedEmpty.toolArguments.weights.publico, 0);
+  assert.equal(mappedEmpty.toolArguments.weights.cliente, 0);
+  assert.ok(mappedEmpty.toolArguments.weights.produto > 0);
+  assert.ok(mappedEmpty.toolArguments.weights.descricao > 0);
+  const sumMapped = Object.values(mappedEmpty.toolArguments.weights).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(sumMapped - 1) < 1e-6, `sum=${sumMapped}`);
+  console.log("OK pesos zerados em dimensões sem query");
 }
 
 {

@@ -183,6 +183,50 @@ export function buildFixedWeights(intent, dimMap, includeBm25 = true) {
   return weights;
 }
 
+/**
+ * Zera peso de dimensões sem texto de query e renormaliza o restante para 1.
+ * BM25 só entra se includeBm25 (há bm25_query). Se nada restar, 1.0 vai
+ * para a primeira dimensão preenchida ou, em último caso, a primeira chave.
+ * @param {Record<string, number>} weights
+ * @param {Record<string, string>} [queries]
+ * @param {{ includeBm25?: boolean }} [options]
+ */
+export function zeroWeightsWithoutQueries(weights, queries = {}, { includeBm25 = false } = {}) {
+  const out = {};
+  for (const [k, v] of Object.entries(weights || {})) {
+    if (k === "bm25") {
+      out.bm25 = includeBm25 ? Math.max(0, Number(v) || 0) : 0;
+      continue;
+    }
+    const filled = typeof queries[k] === "string" && queries[k].trim();
+    out[k] = filled ? Math.max(0, Number(v) || 0) : 0;
+  }
+  if (includeBm25 && !Object.prototype.hasOwnProperty.call(out, "bm25")) {
+    out.bm25 = 0;
+  }
+  if (!includeBm25) delete out.bm25;
+
+  const positive = Object.keys(out).filter((k) => out[k] > 0);
+  if (!positive.length) {
+    const fallback =
+      Object.keys(out).find((k) => k !== "bm25" && typeof queries[k] === "string" && queries[k].trim()) ||
+      (includeBm25 ? "bm25" : null) ||
+      Object.keys(out).find((k) => k !== "bm25") ||
+      Object.keys(out)[0];
+    if (fallback) {
+      for (const k of Object.keys(out)) out[k] = 0;
+      out[fallback] = 1;
+    }
+    return out;
+  }
+
+  const sum = positive.reduce((a, k) => a + out[k], 0);
+  for (const k of positive) out[k] = Number((out[k] / sum).toFixed(6));
+  const newSum = Object.values(out).reduce((a, b) => a + b, 0);
+  out[positive[0]] = Number((out[positive[0]] + (1 - newSum)).toFixed(6));
+  return out;
+}
+
 function normalizeIntent(raw) {
   const s = String(raw || "")
     .trim()
@@ -382,7 +426,11 @@ export function mapQueryManagerToToolArgs(qm, config, options = {}) {
     Boolean(qmBm25Text) ||
     qmWantsBm25 ||
     specificity.specific;
-  const weights = buildFixedWeights(intent, dimMap, includeBm25);
+  const weights = zeroWeightsWithoutQueries(
+    buildFixedWeights(intent, dimMap, includeBm25),
+    queries,
+    { includeBm25 },
+  );
 
   const filter = {};
   const modelo = pickModeloNegocio(qm.Modelo_Negocio ?? qm.modelo_negocio);
@@ -721,10 +769,14 @@ export async function planSearchFromParams(params = {}, config = {}, options = {
     typeof params.bm25_query === "string" ? params.bm25_query.trim() : "";
   const includeBm25 = params.bm25 !== false && Boolean(keywords);
 
-  const weights = coerceWeightMap(
-    params.weights && typeof params.weights === "object" ? params.weights : {},
-    dimensionKeys,
-    includeBm25,
+  const weights = zeroWeightsWithoutQueries(
+    coerceWeightMap(
+      params.weights && typeof params.weights === "object" ? params.weights : {},
+      dimensionKeys,
+      includeBm25,
+    ),
+    queries,
+    { includeBm25 },
   );
 
   const modelo = pickModeloNegocio(params.modelo_negocio);
