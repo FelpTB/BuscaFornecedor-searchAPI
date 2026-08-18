@@ -371,6 +371,11 @@ export function createXrayRouter() {
         await hydrateChatSessionIfNeeded(sessionHint, auth.userId);
       }
 
+      const search_params =
+        req.body?.search_params && typeof req.body.search_params === "object"
+          ? req.body.search_params
+          : null;
+
       const out = await runChatTurn({
         session_id: req.body?.session_id,
         message,
@@ -379,6 +384,7 @@ export function createXrayRouter() {
         final_limit: Number.isInteger(final_limit) && final_limit >= 1 ? final_limit : 10,
         debug: req.body?.debug === true,
         rerank: req.body?.rerank === true,
+        search_params,
         auth,
         assertCanSearch,
         onSearchCompleted: (bundle, turnAuth, sid) => {

@@ -179,6 +179,36 @@ export function mapResultsForDisplay(results, limit = 20) {
   });
 }
 
+/**
+ * Lista markdown no padrão do chat, sem passar pelo LLM.
+ * @param {object[]} results
+ * @param {{ intro?: string }} [opts]
+ */
+export function formatResultsMarkdown(results, opts = {}) {
+  const items = mapResultsForDisplay(results);
+  if (!items.length) {
+    return (
+      opts.intro ||
+      "Nenhum fornecedor encontrado com estes parâmetros. Tente ampliar a região ou ajustar os recortes."
+    );
+  }
+  const lines = [
+    opts.intro || `Encontrei ${items.length} fornecedor(es) com os parâmetros ajustados:`,
+    "",
+  ];
+  for (const r of items) {
+    const nome = softTitleCase(r.nome_empresa || "Fornecedor");
+    lines.push(`${r.posicao}. **${nome}**`);
+    if (r.local) lines.push(`   - **Local:** ${r.local}`);
+    if (r.modelo_negocio) lines.push(`   - **Modelo de Negócio:** ${r.modelo_negocio}`);
+    if (r.descricao) lines.push(`   - **Descrição:** ${r.descricao}`);
+    if (r.site_md) lines.push(`   - **Site:** ${r.site_md}`);
+    if (r.perfil_md) lines.push(`   - **Perfil:** ${r.perfil_md}`);
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
 /** Instrução fixa no system prompt do agente. */
 export const RESULT_DISPLAY_PROMPT = `Formato OBRIGATÓRIO ao listar fornecedores (não invente campos; omita a linha se o valor for null):
 

@@ -6,11 +6,12 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import { fetchCitiesNearby } from "../clients/citiesApi.js";
-import { planSearchToolCall, normalizeUfList, formatUfFilterValue } from "./searchAgent.js";
+import { planSearchToolCall, planSearchFromParams, normalizeUfList, formatUfFilterValue } from "./searchAgent.js";
 import { resolveExactTerms } from "../search/bm25Query.js";
 import { runFallbackCascade } from "../search/fallbackSearch.js";
 import {
   mapResultsForDisplay,
+  formatResultsMarkdown,
   RESULT_DISPLAY_PROMPT,
 } from "../search/resultDisplay.js";
 import {
@@ -690,12 +691,29 @@ export async function runChatTurn({
   auth = null,
   assertCanSearch = null,
   onSearchCompleted = null,
+  search_params = null,
 }) {
   const text = typeof message === "string" ? message.trim() : "";
   if (!text) {
     const err = new Error("Campo 'message' é obrigatório");
     err.status = 400;
     throw err;
+  }
+
+  if (search_params && typeof search_params === "object") {
+    return runParamsRerunTurn({
+      session_id,
+      message: text,
+      search_params,
+      config,
+      executeSearchByText,
+      final_limit,
+      debug,
+      rerank,
+      auth,
+      assertCanSearch,
+      onSearchCompleted,
+    });
   }
 
   const session = getOrCreateSession(session_id, {
@@ -914,6 +932,109 @@ export async function runChatTurn({
       tool_rounds: rounds,
     },
     fallback: lastSearchBundle?.fallback ?? null,
+  };
+}
+
+/**
+ * Refaz a busca com parâmetros explícitos da UI, sem Query Manager.
+ */
+async function runParamsRerunTurn({
+  session_id,
+  message,
+  search_params,
+  config,
+  executeSearchByText,
+  final_limit = 10,
+  debug = false,
+  rerank = false,
+  auth = null,
+  assertCanSearch = null,
+  onSearchCompleted = null,
+}) {
+  const started = Date.now();
+  const session = getOrCreateSession(session_id, {
+    userId: auth?.userId || null,
+  });
+
+  if (typeof assertCanSearch === "function") {
+    await assertCanSearch(auth || {});
+  }
+
+  const plan = await planSearchFromParams(search_params, config, {
+    final_limit,
+    debug,
+    rerank,
+  });
+  const searchStarted = Date.now();
+  const search = await executeSearchByText(plan.mcp_tool_call.arguments, {
+    debug: plan.mcp_tool_call.arguments.debug === true,
+    rerank: plan.mcp_tool_call.arguments.rerank === true,
+  });
+  const search_duration_ms = Date.now() - searchStarted;
+  const bundle = { ...plan, search_duration_ms, search };
+
+  const resultCount = Array.isArray(search?.results) ? search.results.length : 0;
+  const reply = formatResultsMarkdown(search?.results || [], {
+    intro:
+      resultCount > 0
+        ? `Busca refeita. Encontrei ${resultCount} fornecedor(es):`
+        : "Busca refeita. Nenhum fornecedor encontrado com estes parâmetros. Tente ampliar a região ou ajustar os recortes.",
+  });
+
+  const toStore = [
+    ...session.messages.filter((m) => m.role !== "system"),
+    { role: "user", content: message },
+    { role: "assistant", content: reply },
+  ];
+  setSessionMessages(session, toStore);
+  setSessionLastSearch(session, bundle, search);
+  onSearchCompleted?.(bundle, auth, session.id);
+
+  return {
+    session_id: session.id,
+    reply,
+    messages: publicMessages(session),
+    actions: [
+      {
+        tool: "search_suppliers",
+        source: "ui_params",
+        intent: plan.intent,
+        result_count: resultCount,
+        search_id: search?.search_id,
+        fallback: false,
+        stages: null,
+        geo: plan.geo
+          ? {
+              city: plan.geo.city_name,
+              cities: plan.geo.cities_in_filter,
+              radius_km: plan.geo.radius_km,
+              uf: plan.geo.uf,
+              ufs: plan.geo.ufs || null,
+              scope: plan.geo.scope || null,
+            }
+          : null,
+      },
+    ],
+    model: MODEL,
+    duration_ms: Date.now() - started,
+    tokens_used: null,
+    intent: plan.intent ?? null,
+    query_manager: plan.query_manager ?? null,
+    geo: plan.geo ?? null,
+    mcp_tool_call: plan.mcp_tool_call ?? null,
+    search,
+    search_duration_ms,
+    reasoning: "Parâmetros explícitos da UI (sem Query Manager)",
+    issued_api_key: null,
+    auth: publicAuthView(auth),
+    simulation: {
+      client: "ui-search-params",
+      role: "Refazer busca com parâmetros da aba lateral",
+      tools_available: ["search_text"],
+      transport: "same-process (X-Ray)",
+      tool_rounds: 0,
+    },
+    fallback: null,
   };
 }
 

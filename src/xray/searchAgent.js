@@ -10,7 +10,7 @@ import { detectQuerySpecificity, mergeBm25Query, resolveExactTerms } from "../se
 
 const MODEL = process.env.LLM_SEARCH_AGENT_MODEL || process.env.LLM_RERANK_MODEL || "gpt-4o-mini";
 
-const MODELO_NEGOCIO_ALLOWED = [
+export const MODELO_NEGOCIO_ALLOWED = [
   "Fabricante",
   "Distribuidor",
   "Atacado",
@@ -684,6 +684,212 @@ export async function runAgentSearch({
     search_duration_ms: Date.now() - searchStarted,
     search,
   };
+}
+
+/**
+ * Monta arguments de search_text a partir de parâmetros explícitos da UI
+ * (sem Query Manager). Geo cidade+raio ainda passa pela API de cidades.
+ * @param {object} params
+ * @param {object} [config]
+ * @param {{ final_limit?: number, debug?: boolean, rerank?: boolean }} [options]
+ */
+export async function planSearchFromParams(params = {}, config = {}, options = {}) {
+  const query = typeof params.query === "string" ? params.query.trim() : "";
+  if (!query) {
+    const err = new Error("Campo 'query' é obrigatório");
+    err.status = 400;
+    throw err;
+  }
+
+  const dimMap = resolveDimMap(config.dimension_keys);
+  const dimensionKeys = Array.isArray(config.dimension_keys) && config.dimension_keys.length
+    ? config.dimension_keys
+    : ["produto", "servico", "descricao", "publico", "cliente"];
+
+  const incoming = params.queries && typeof params.queries === "object" ? params.queries : {};
+  const queries = {};
+  for (const key of dimensionKeys) {
+    const t = incoming[key];
+    if (typeof t === "string" && t.trim()) queries[key] = t.trim();
+  }
+
+  const keywords =
+    typeof params.bm25_query === "string" ? params.bm25_query.trim() : "";
+  const includeBm25 = params.bm25 !== false && Boolean(keywords);
+
+  const weights = coerceWeightMap(
+    params.weights && typeof params.weights === "object" ? params.weights : {},
+    dimensionKeys,
+    includeBm25,
+  );
+
+  const modelo = pickModeloNegocio(params.modelo_negocio);
+  const filter = {};
+  if (modelo) filter.modelo_negocio = modelo;
+
+  const cityName = typeof params.city_name === "string" ? params.city_name.trim() : "";
+  const ufs = normalizeUfList(params.uf ?? params.ufs);
+  const ufFilter = formatUfFilterValue(ufs);
+  let radiusKm =
+    params.radius_km != null && params.radius_km !== ""
+      ? Number(params.radius_km)
+      : null;
+  if (!Number.isFinite(radiusKm) || radiusKm < 0) radiusKm = null;
+
+  let cityNames = null;
+  let geoMeta = null;
+
+  if (cityName && radiusKm != null && radiusKm > 0) {
+    const geoReq = {
+      city_name: cityName,
+      uf: ufs.length ? ufs[0] : null,
+      radius_km: radiusKm,
+    };
+    try {
+      const nearby = await fetchCitiesNearby(geoReq);
+      cityNames = nearby.city_names;
+      geoMeta = {
+        city_name: cityName,
+        uf: geoReq.uf,
+        ufs: ufs.length ? ufs : null,
+        radius_km: nearby.radius_km,
+        total_found: nearby.total_found,
+        cities_in_filter: cityNames.length,
+        truncated: nearby.truncated,
+        center_city: nearby.center_city,
+        city_names_sample: cityNames.slice(0, 15),
+        cities_api: nearby.source,
+        scope: "cidade",
+      };
+    } catch (geoErr) {
+      geoMeta = {
+        city_name: cityName,
+        uf: geoReq.uf,
+        ufs: ufs.length ? ufs : null,
+        radius_km: radiusKm,
+        error: geoErr.message || String(geoErr),
+        status: geoErr.status,
+        scope: "cidade",
+      };
+      cityNames = [cityName];
+    }
+  } else if (cityName) {
+    cityNames = [cityName];
+    geoMeta = {
+      city_name: cityName,
+      uf: ufs.length ? ufs[0] : null,
+      ufs: ufs.length ? ufs : null,
+      radius_km: radiusKm === 0 ? 0 : null,
+      cities_in_filter: 1,
+      city_names_sample: [cityName],
+      scope: "cidade",
+    };
+  } else if (ufs.length) {
+    geoMeta = {
+      city_name: null,
+      uf: ufFilter,
+      ufs,
+      radius_km: null,
+      cities_in_filter: 0,
+      scope: "uf",
+    };
+  } else {
+    geoMeta = {
+      city_name: null,
+      uf: null,
+      ufs: null,
+      radius_km: null,
+      cities_in_filter: 0,
+      scope: "nacional",
+    };
+  }
+
+  if (cityNames && cityNames.length > 0) {
+    filter.cidade = cityNames.length === 1 ? cityNames[0] : cityNames;
+  } else if (ufFilter != null) {
+    filter.uf = ufFilter;
+  }
+
+  const exactTerms = Array.isArray(params.exact_terms)
+    ? params.exact_terms.map((t) => String(t).trim()).filter(Boolean)
+    : typeof params.exact_terms === "string" && params.exact_terms.trim()
+      ? [params.exact_terms.trim()]
+      : [];
+
+  const toolArguments = {
+    query,
+    weights,
+    queries,
+    limit_per_vector: 50,
+    final_limit:
+      Number.isInteger(Number(options.final_limit)) && Number(options.final_limit) >= 1
+        ? Number(options.final_limit)
+        : 10,
+    rerank: options.rerank === true,
+    debug: options.debug === true,
+  };
+  if (Object.keys(filter).length) toolArguments.filter = filter;
+  if (exactTerms.length) toolArguments.exact_terms = exactTerms;
+  if (includeBm25) {
+    toolArguments.bm25_query = keywords;
+  } else {
+    toolArguments.bm25 = false;
+  }
+
+  const intent =
+    typeof params.intent === "string" && params.intent.trim()
+      ? String(params.intent).trim().toUpperCase()
+      : null;
+
+  return {
+    user_query: query,
+    intent,
+    query_manager: {
+      query_original: query,
+      intent,
+      produtos: queries[dimMap.produto] || null,
+      servicos: queries[dimMap.servico] || null,
+      descricao: queries[dimMap.descricao] || null,
+      publico: queries[dimMap.publico] || null,
+      clientes: queries[dimMap.cliente] || null,
+      bm25: includeBm25 ? keywords : null,
+      exact_terms: exactTerms.length ? exactTerms : null,
+      use_bm25: includeBm25,
+      Modelo_Negocio: modelo,
+      cidade_centro: cityName || null,
+      uf: ufFilter,
+      ufs,
+      radius_km: geoMeta?.radius_km ?? radiusKm,
+    },
+    geo: geoMeta,
+    mcp_tool_call: {
+      name: "search_text",
+      arguments: toolArguments,
+    },
+  };
+}
+
+function coerceWeightMap(raw, dimensionKeys, includeBm25) {
+  const out = {};
+  for (const key of dimensionKeys) {
+    const v = Number(raw?.[key]);
+    out[key] = Number.isFinite(v) && v >= 0 ? v : 0;
+  }
+  if (includeBm25) {
+    const v = Number(raw?.bm25);
+    out.bm25 = Number.isFinite(v) && v >= 0 ? v : 0;
+  }
+  const keys = Object.keys(out);
+  const sum = keys.reduce((a, k) => a + out[k], 0);
+  if (sum <= 0) {
+    const eq = Number((1 / keys.length).toFixed(6));
+    for (const k of keys) out[k] = eq;
+  } else {
+    for (const k of keys) out[k] = Number((out[k] / sum).toFixed(6));
+  }
+  const fixed = keys.reduce((a, k) => a + out[k], 0);
+  out[keys[0]] = Number((out[keys[0]] + (1 - fixed)).toFixed(6));
+  return out;
 }
 
 /** Executa tool call manual (sem LLM). */
