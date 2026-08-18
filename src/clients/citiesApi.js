@@ -103,12 +103,28 @@ export async function fetchCitiesNearby({ city_name, uf, radius_km, baseUrl } = 
     center_city: data.center_city || null,
     nearby_cities: nearby,
     city_names,
+    ufs: collectUfsFromNearby({ center_city: data.center_city, nearby_cities: nearby }),
     total_found: data.total_found ?? unique.length,
     radius_km: data.radius_km ?? radius,
     truncated,
     max_cities: MAX_CITIES,
     source: url,
   };
+}
+
+/** UFs distintas das cidades do raio (centro + vizinhas). */
+export function collectUfsFromNearby(nearby) {
+  const codes = [];
+  const push = (raw) => {
+    const u = String(raw || "").trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(u) || codes.includes(u)) return;
+    codes.push(u);
+  };
+  if (!nearby || typeof nearby !== "object") return codes;
+  push(nearby.center_city?.uf);
+  const list = Array.isArray(nearby.nearby_cities) ? nearby.nearby_cities : [];
+  for (const c of list) push(c?.uf);
+  return codes;
 }
 
 export function getCitiesApiBase() {

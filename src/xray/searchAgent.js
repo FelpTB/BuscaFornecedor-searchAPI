@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { fetchCitiesNearby } from "../clients/citiesApi.js";
+import { fetchCitiesNearby, collectUfsFromNearby } from "../clients/citiesApi.js";
 import { detectQuerySpecificity, mergeBm25Query, resolveExactTerms } from "../search/bm25Query.js";
 
 /**
@@ -564,9 +564,13 @@ export async function planSearchToolCall(userQuery, config, options = {}) {
     try {
       const nearby = await fetchCitiesNearby(geoReq);
       cityNames = nearby.city_names;
+      const radiusUfs = nearby.ufs?.length
+        ? nearby.ufs
+        : collectUfsFromNearby(nearby);
       geoMeta = {
         city_name: geoReq.city_name,
-        uf: geoReq.uf,
+        uf: radiusUfs.length === 1 ? radiusUfs[0] : geoReq.uf,
+        ufs: radiusUfs.length ? radiusUfs : geoReq.uf ? [geoReq.uf] : null,
         radius_km: nearby.radius_km,
         total_found: nearby.total_found,
         cities_in_filter: cityNames.length,
@@ -748,10 +752,13 @@ export async function planSearchFromParams(params = {}, config = {}, options = {
     try {
       const nearby = await fetchCitiesNearby(geoReq);
       cityNames = nearby.city_names;
+      const radiusUfs = nearby.ufs?.length
+        ? nearby.ufs
+        : collectUfsFromNearby(nearby);
       geoMeta = {
         city_name: cityName,
-        uf: geoReq.uf,
-        ufs: ufs.length ? ufs : null,
+        uf: radiusUfs.length === 1 ? radiusUfs[0] : geoReq.uf,
+        ufs: radiusUfs.length ? radiusUfs : ufs.length ? ufs : null,
         radius_km: nearby.radius_km,
         total_found: nearby.total_found,
         cities_in_filter: cityNames.length,
@@ -857,8 +864,8 @@ export async function planSearchFromParams(params = {}, config = {}, options = {
       use_bm25: includeBm25,
       Modelo_Negocio: modelo,
       cidade_centro: cityName || null,
-      uf: ufFilter,
-      ufs,
+      uf: formatUfFilterValue(geoMeta?.ufs?.length ? geoMeta.ufs : ufs),
+      ufs: geoMeta?.ufs?.length ? geoMeta.ufs : ufs,
       radius_km: geoMeta?.radius_km ?? radiusKm,
     },
     geo: geoMeta,
