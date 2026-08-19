@@ -17,6 +17,7 @@ import {
 import {
   getOrCreateSession,
   resetSession,
+  forgetSession,
   setSessionMessages,
   setSessionLastSearch,
   publicMessages,
@@ -1045,5 +1046,36 @@ export function resetChatSession(session_id, opts = {}) {
   return {
     session_id: session.id,
     messages: [],
+    reused: false,
+  };
+}
+
+/**
+ * Retoma uma conversa vazia já persistida em vez de criar outra.
+ * @param {string} existingId
+ * @param {string|null|undefined} previousSessionId
+ * @param {{ userId?: string|null }} [opts]
+ */
+export function resumeEmptyChatSession(existingId, previousSessionId, opts = {}) {
+  const userId = opts.userId || null;
+  const id = typeof existingId === "string" ? existingId.trim() : "";
+  const prev =
+    typeof previousSessionId === "string" && previousSessionId.trim()
+      ? previousSessionId.trim()
+      : "";
+  if (prev && prev !== id) {
+    try {
+      forgetSession(prev, { userId });
+    } catch {
+      /* sessão anterior pode já ter expirado */
+    }
+  }
+  const session = getOrCreateSession(id, { userId });
+  setSessionMessages(session, []);
+  setSessionLastSearch(session, null, null);
+  return {
+    session_id: session.id,
+    messages: [],
+    reused: true,
   };
 }

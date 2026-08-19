@@ -286,6 +286,61 @@ export async function listConversas(userId, opts = {}) {
 }
 
 /**
+ * Conversa do usuário sem mensagens e sem busca — reusada em "Nova conversa".
+ * @param {string} userId
+ * @param {{ excludeId?: string|null }} [opts]
+ * @returns {Promise<{ id: string, title?: string|null, last_search_id?: string|null, updated_at?: string }|null>}
+ */
+export async function findEmptyConversa(userId, opts = {}) {
+  const uid = typeof userId === "string" ? userId.trim() : "";
+  const excludeId = typeof opts.excludeId === "string" ? opts.excludeId.trim() : "";
+  if (!uid) return null;
+  if (!ensureConfigured()) return null;
+
+  const pool = getPgPool();
+  if (pool) {
+    const { rows } = await pool.query(
+      `SELECT c.id, c.title, c.last_search_id, c.updated_at
+       FROM busca_fornecedor.agente_busca_conversas c
+       WHERE c.user_id = $1
+         AND ($2::text = '' OR c.id::text <> $2)
+         AND c.last_search_id IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM busca_fornecedor.agente_busca_mensagens m
+           WHERE m.conversa_id = c.id
+         )
+       ORDER BY c.updated_at DESC
+       LIMIT 1`,
+      [uid, excludeId],
+    );
+    return rows[0] || null;
+  }
+
+  const sb = getSupabaseAdmin();
+  let q = sb
+    .schema(SCHEMA)
+    .from(T_CONV)
+    .select("id, title, last_search_id, updated_at")
+    .eq("user_id", uid)
+    .is("last_search_id", null)
+    .order("updated_at", { ascending: false })
+    .limit(20);
+  if (excludeId) q = q.neq("id", excludeId);
+  const { data, error } = await q;
+  if (error) throw mapSupabaseError(error, "find empty conversa");
+  for (const row of data || []) {
+    const { count, error: mErr } = await sb
+      .schema(SCHEMA)
+      .from(T_MSG)
+      .select("id", { count: "exact", head: true })
+      .eq("conversa_id", row.id);
+    if (mErr) throw mapSupabaseError(mErr, "count mensagens empty conversa");
+    if ((count ?? 0) === 0) return row;
+  }
+  return null;
+}
+
+/**
  * @param {string} userId
  * @param {string} conversaId
  */

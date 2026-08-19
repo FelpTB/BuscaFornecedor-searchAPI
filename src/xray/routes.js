@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { getSearchXrayHtml } from "./xrayHtml.js";
 import { runAgentSearch, runManualToolCall } from "./searchAgent.js";
-import { runChatTurn, resetChatSession } from "./conversationalAgent.js";
+import { runChatTurn, resetChatSession, resumeEmptyChatSession } from "./conversationalAgent.js";
 import { fetchCitiesNearby, getCitiesApiBase } from "../clients/citiesApi.js";
 import { executeSearchByText, getPublicConfig } from "../searchService.js";
 import { logError, logSuccess } from "../logger.js";
@@ -22,6 +22,7 @@ import {
   getConversa,
   deleteConversa,
   upsertConversa,
+  findEmptyConversa,
 } from "../db/repositories/conversasRepo.js";
 import {
   getCommsQueueDepth,
@@ -449,7 +450,22 @@ export function createXrayRouter() {
       } catch {
         auth = { userId: null };
       }
-      const out = resetChatSession(req.body?.session_id, {
+      const previousId =
+        typeof req.body?.session_id === "string" ? req.body.session_id.trim() : "";
+      if (auth?.userId) {
+        try {
+          const empty = await findEmptyConversa(auth.userId, { excludeId: previousId });
+          if (empty?.id) {
+            const out = resumeEmptyChatSession(empty.id, previousId, {
+              userId: auth.userId,
+            });
+            return res.json(out);
+          }
+        } catch {
+          /* se o histórico falhar, ainda criamos uma conversa nova */
+        }
+      }
+      const out = resetChatSession(previousId || req.body?.session_id, {
         userId: auth?.userId || null,
       });
       if (auth?.userId) {
