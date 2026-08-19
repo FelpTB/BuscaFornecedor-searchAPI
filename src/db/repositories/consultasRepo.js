@@ -18,12 +18,15 @@
 
 import { getSupabaseAdmin, isSupabaseConfigured } from "../supabaseAdmin.js";
 import { getPgPool } from "../pgPool.js";
+import { mapSupabaseError } from "../mapSupabaseError.js";
 import { logWarn, logInfo } from "../../logger.js";
+import { AppError } from "../../errors/AppError.js";
 
 const SCHEMA = "busca_fornecedor";
 const STATUS_OK = "concluida";
 const STATUS_ERR = "erro";
-const QUALIDADE_AVALIACAO = new Set(["Ótimo", "Bom", "Ruim", "Péssimo"]);
+export const QUALIDADE_VALUES = ["Ótimo", "Bom", "Ruim", "Péssimo"];
+const QUALIDADE_AVALIACAO = new Set(QUALIDADE_VALUES);
 
 function digitsOnly(cnpj) {
   return String(cnpj || "").replace(/\D/g, "");
@@ -1008,7 +1011,7 @@ export async function getConsultaById(searchId) {
     .schema(SCHEMA)
     .from("consultas")
     .select(
-      "id, comprador, status, origem, created_at, parametros, resultados, v_produto, v_servico, v_descricao, v_publico, v_cliente, bm_25, uf, municipio, modelo_negocio",
+      "id, comprador, status, origem, created_at, parametros, resultados, v_produto, v_servico, v_descricao, v_publico, v_cliente, bm_25, uf, municipio, modelo_negocio, qualidade",
     )
     .eq("id", searchId)
     .maybeSingle();
@@ -1144,4 +1147,49 @@ async function backfillAparicoesForExistingConsulta(event) {
     results: toCanonicalResultItems(results, event.search_id),
     via: "supabase-js-backfill",
   };
+}
+
+/**
+ * Avaliação do comprador na consulta (Ótimo/Bom/Ruim/Péssimo).
+ * @param {string} searchId
+ * @param {string} userId
+ * @param {string} qualidade
+ */
+export async function updateConsultaQualidade(searchId, userId, qualidade) {
+  const id = typeof searchId === "string" ? searchId.trim() : "";
+  const uid = typeof userId === "string" ? userId.trim() : "";
+  const value = typeof qualidade === "string" ? qualidade.trim() : "";
+  if (!id) throw AppError.badRequest("searchId obrigatório");
+  if (!uid) throw AppError.unauthorized();
+  if (!QUALIDADE_AVALIACAO.has(value)) {
+    throw AppError.badRequest(`qualidade deve ser uma de: ${QUALIDADE_VALUES.join(", ")}`);
+  }
+
+  const pool = getPgPool();
+  if (pool) {
+    const { rows } = await pool.query(
+      `UPDATE busca_fornecedor.consultas
+       SET qualidade = $1
+       WHERE id = $2 AND comprador = $3
+       RETURNING id, qualidade`,
+      [value, id, uid],
+    );
+    if (!rows.length) return null;
+    return { id: rows[0].id, qualidade: rows[0].qualidade };
+  }
+
+  if (!isSupabaseConfigured()) {
+    throw AppError.serviceUnavailable("Persistência não configurada");
+  }
+  const sb = getSupabaseAdmin();
+  const { data, error } = await sb
+    .schema(SCHEMA)
+    .from("consultas")
+    .update({ qualidade: value })
+    .eq("id", id)
+    .eq("comprador", uid)
+    .select("id, qualidade")
+    .maybeSingle();
+  if (error) throw mapSupabaseError(error, "avaliar consulta");
+  return data;
 }

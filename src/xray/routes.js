@@ -21,6 +21,7 @@ import {
   listConversas,
   getConversa,
   deleteConversa,
+  upsertConversa,
 } from "../db/repositories/conversasRepo.js";
 import {
   getCommsQueueDepth,
@@ -451,6 +452,18 @@ export function createXrayRouter() {
       const out = resetChatSession(req.body?.session_id, {
         userId: auth?.userId || null,
       });
+      if (auth?.userId) {
+        try {
+          await upsertConversa({
+            id: out.session_id,
+            userId: auth.userId,
+            title: "Nova conversa",
+            source: "xray",
+          });
+        } catch {
+          /* sessão em memória já existe; histórico pode atrasar um turno */
+        }
+      }
       return res.json(out);
     } catch (err) {
       return next(err);

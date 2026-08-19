@@ -13,7 +13,7 @@ import {
   revokeUserApiKey,
 } from "../auth/registerBuyer.js";
 import { maybeEnqueueFromSearch } from "../telemetry/enqueue.js";
-import { getConsultaById, getAparicoesAgg } from "../db/repositories/consultasRepo.js";
+import { getConsultaById, getAparicoesAgg, updateConsultaQualidade } from "../db/repositories/consultasRepo.js";
 import {
   listConversas,
   getConversa,
@@ -137,6 +137,21 @@ export function createApiRouter() {
       const row = await getConsultaById(req.params.searchId);
       if (!row) return res.status(404).json({ error: "Consulta não encontrada" });
       if (row.comprador !== req.auth.userId) throw AppError.forbidden();
+      return res.json(row);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  router.patch("/auth/consultas/:searchId/qualidade", async (req, res, next) => {
+    try {
+      if (!req.auth?.userId) throw AppError.unauthorized();
+      const row = await updateConsultaQualidade(
+        req.params.searchId,
+        req.auth.userId,
+        req.body?.qualidade,
+      );
+      if (!row) return res.status(404).json({ error: "Consulta não encontrada" });
       return res.json(row);
     } catch (err) {
       return next(err);
