@@ -968,6 +968,7 @@ async function persistWithSupabaseJs(event) {
 
 function mapOrigem(source) {
   const s = String(source || "api").toLowerCase();
+  if (s === "agente" || s === "agent" || s === "agent-ui" || s === "agentui") return "agente";
   if (s === "xray" || s === "x-ray") return "xray";
   if (s === "mcp") return "mcp";
   if (s === "whatsapp") return "whatsapp";

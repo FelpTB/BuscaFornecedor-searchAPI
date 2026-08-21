@@ -66,6 +66,18 @@ function normalizeScopes(raw) {
   return ["search"];
 }
 
+function jwtExpiresAtMs(token) {
+  try {
+    const parts = String(token || "").split(".");
+    if (parts.length < 2) return null;
+    const json = Buffer.from(parts[1], "base64url").toString("utf8");
+    const payload = JSON.parse(json);
+    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
 function cacheGet(key) {
   const hit = cache.get(key);
   if (!hit) return null;
@@ -76,8 +88,9 @@ function cacheGet(key) {
   return hit.value;
 }
 
-function cacheSet(key, value) {
-  cache.set(key, { value, exp: Date.now() + CACHE_TTL_MS });
+function cacheSet(key, value, ttlMs = CACHE_TTL_MS) {
+  const ttl = Math.max(1_000, Number(ttlMs) || CACHE_TTL_MS);
+  cache.set(key, { value, exp: Date.now() + ttl });
 }
 
 export function invalidateAuthCacheForApiKeyHash(keyHash) {
@@ -180,6 +193,9 @@ async function resolveSupabaseApiKey(token) {
 
 async function resolveSupabaseJwt(token) {
   if (!isSupabaseConfigured()) return null;
+  const expAt = jwtExpiresAtMs(token);
+  if (expAt && expAt <= Date.now() + 5_000) return null;
+
   const key = jwtCacheKey(token);
   const cached = cacheGet(key);
   if (cached) return { ...cached };
@@ -200,7 +216,8 @@ async function resolveSupabaseJwt(token) {
     comprador: null,
   };
   ctx = await enrichWithComprador(ctx);
-  cacheSet(key, ctx);
+  const ttl = expAt ? Math.min(CACHE_TTL_MS, expAt - Date.now() - 5_000) : CACHE_TTL_MS;
+  if (ttl > 0) cacheSet(key, ctx, ttl);
   return ctx;
 }
 

@@ -11,7 +11,16 @@ export function authMiddleware(req, _res, next) {
       req.auth = auth;
       next();
     })
-    .catch((err) => next(err));
+    .catch((err) => {
+      const path = String(req.path || "");
+      const publicAuth =
+        /\/auth\/(login-buyer|register-buyer|refresh)$/.test(path);
+      if (publicAuth && (err.status === 401 || err.statusCode === 401)) {
+        req.auth = anonymousAuth();
+        return next();
+      }
+      next(err);
+    });
 }
 
 /** Gera search_id (UUID) para rastreio REST/MCP/logs. */

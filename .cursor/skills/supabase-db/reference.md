@@ -16,7 +16,7 @@ Complemento da skill `supabase-db`. Ler sob demanda.
 ### `busca_fornecedor.usuario_comprador`
 
 PK `id` = `auth.users.id`. Cotas: `limite_buscas`, `buscas_realizadas`, `tier_busca`.  
-`fonte`: Site | WhatsApp | **Agente** (novo valor sugerido).
+`fonte`: Site | WhatsApp | **Agente** (cadastro via assistente/X-Ray/AgentUI). Cota inicial do Agente: `limite_buscas = 500`.
 
 ### `busca_fornecedor.consultas`
 
@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS busca_fornecedor.aparicoes_cnpj_agg (
 | v_* / bm_25 | queries / bm25_query |
 | uf / municipio | filter arrays |
 | modelo_negocio | filter.modelo_negocio |
-| origem | rest \| mcp \| xray |
+| origem | rest \| mcp \| xray \| **agente** (UI do assistente) |
 | fallback | false até Fallback Vector |
 
 ### Allowlist `resultados[]`

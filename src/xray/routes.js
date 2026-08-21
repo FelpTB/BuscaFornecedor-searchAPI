@@ -44,6 +44,20 @@ import { forgetSession } from "./chatSessions.js";
 import { getAuthModes, getAuthMode } from "../config/env.js";
 import { createRateLimiter } from "../middleware/rateLimit.js";
 
+function headerValue(headers, name) {
+  const raw = headers?.[name] || headers?.[name.toLowerCase()];
+  return Array.isArray(raw) ? raw[0] : raw;
+}
+
+/** UI do assistente grava consultas.origem = 'agente'; harness QA permanece 'xray'. */
+function agentSearchSource(req) {
+  const client = String(headerValue(req.headers, "x-busca-client") || "")
+    .trim()
+    .toLowerCase();
+  if (client === "agent-ui" || client === "agente") return "agente";
+  return "xray";
+}
+
 /**
  * Rotas X-Ray — chat + auth/onboarding + probes Supabase.
  */
@@ -397,7 +411,7 @@ export function createXrayRouter() {
               ...(bundle.mcp_tool_call?.arguments || {}),
               intent: bundle.intent,
             },
-            source: "xray",
+            source: agentSearchSource(req),
             session_id: sid || sessionHint || null,
           });
         },
@@ -420,7 +434,7 @@ export function createXrayRouter() {
         messages: out.messages,
         search: out.search,
         actions: out.actions,
-        source: "xray",
+        source: agentSearchSource(req),
       });
 
       logSuccess("POST /search/xray/chat", "Chat X-Ray turno", {
@@ -474,7 +488,7 @@ export function createXrayRouter() {
             id: out.session_id,
             userId: auth.userId,
             title: "Nova conversa",
-            source: "xray",
+            source: agentSearchSource(req),
           });
         } catch {
           /* sessão em memória já existe; histórico pode atrasar um turno */

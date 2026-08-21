@@ -20,6 +20,7 @@ import { generateApiKey } from "./apiKeyHash.js";
 import { AppError, isAppError } from "../errors/AppError.js";
 import { mapSupabaseError } from "../db/mapSupabaseError.js";
 import { loginMintApiKey, maxActiveApiKeys } from "../config/env.js";
+import { canonicalizeFonte, limiteBuscasForFonte } from "./fonte.js";
 
 function rethrowMapped(e) {
   if (isAppError(e)) throw e;
@@ -37,6 +38,16 @@ async function assertUnderKeyCap(userId) {
   }
 }
 
+function sessionTokens(session) {
+  if (!session) return {};
+  return {
+    access_token: session.access_token || null,
+    refresh_token: session.refresh_token || null,
+    expires_in: session.expires_in ?? null,
+    expires_at: session.expires_at ?? null,
+  };
+}
+
 function formatBuyerResult({ userId, email, comprador, stored, key, extra = {} }) {
   return {
     user_id: userId,
@@ -44,8 +55,9 @@ function formatBuyerResult({ userId, email, comprador, stored, key, extra = {} }
     comprador: {
       nome: comprador?.nome ?? null,
       tier_busca: comprador?.tier_busca ?? "normal",
-      limite_buscas: comprador?.limite_buscas ?? 50,
+      limite_buscas: comprador?.limite_buscas ?? limiteBuscasForFonte(comprador?.fonte),
       buscas_realizadas: comprador?.buscas_realizadas ?? 0,
+      fonte: comprador?.fonte ?? null,
     },
     api_key: stored && key
       ? {
@@ -74,12 +86,14 @@ async function ensureCompradorProfile(user, { nome, telefone, empresa_nome, font
     (typeof user.email === "string" ? user.email.split("@")[0] : "Comprador");
 
   try {
+    const fonteCanon = canonicalizeFonte(fonte || meta.fonte || "Login", "Login");
     await createCompradorProfile({
       userId,
       nome: resolvedNome,
       telefone: telefone || meta.telefone || null,
       empresa_nome: empresa_nome || meta.empresa_nome || null,
-      fonte: fonte || meta.fonte || "Login",
+      fonte: fonteCanon,
+      limite_buscas: limiteBuscasForFonte(fonteCanon),
     });
   } catch (e) {
     comprador = await getCompradorById(userId);
@@ -121,6 +135,7 @@ export async function registerBuyer(input = {}) {
   const password = passwordProvided
     ? input.password
     : `Tmp!${generateApiKey().plaintext.slice(0, 16)}`;
+  const fonte = canonicalizeFonte(input.fonte || "Agente", "Agente");
 
   const { data: created, error } = await sb.auth.admin.createUser({
     email,
@@ -130,7 +145,7 @@ export async function registerBuyer(input = {}) {
       nome,
       telefone: input.telefone || null,
       empresa_nome: input.empresa_nome || null,
-      fonte: input.fonte || "Agente",
+      fonte,
     },
   });
 
@@ -152,7 +167,7 @@ export async function registerBuyer(input = {}) {
       nome,
       telefone: input.telefone,
       empresa_nome: input.empresa_nome,
-      fonte: input.fonte || "Agente",
+      fonte,
     });
 
     await assertUnderKeyCap(userId);
@@ -229,7 +244,7 @@ export async function loginBuyer(input = {}) {
   const user = data.user;
   try {
     const comprador = await ensureCompradorProfile(user, {
-      fonte: input.fonte || "Login",
+      fonte: canonicalizeFonte(input.fonte || "Login", "Login"),
     });
     if (!comprador) {
       throw AppError.forbidden("Não foi possível criar/obter perfil comprador");
@@ -242,13 +257,14 @@ export async function loginBuyer(input = {}) {
         comprador: {
           nome: comprador?.nome ?? null,
           tier_busca: comprador?.tier_busca ?? "normal",
-          limite_buscas: comprador?.limite_buscas ?? 50,
+          limite_buscas: comprador?.limite_buscas ?? limiteBuscasForFonte(comprador?.fonte),
           buscas_realizadas: comprador?.buscas_realizadas ?? 0,
+          fonte: comprador?.fonte ?? null,
         },
         api_key: null,
-        access_token: data.session?.access_token || null,
+        ...sessionTokens(data.session),
         note:
-          "Login OK sem nova API key (LOGIN_MINT_API_KEY=0). Use access_token (JWT) ou POST /auth/api-keys autenticado.",
+          "Login OK sem nova API key (LOGIN_MINT_API_KEY=0). Use access_token (JWT) + refresh_token, ou POST /auth/api-keys autenticado.",
       };
     }
 
@@ -268,8 +284,8 @@ export async function loginBuyer(input = {}) {
       stored,
       key,
       extra: {
-        access_token: data.session?.access_token || null,
-        note: "API key emitida para conta existente. O JWT (access_token) também autentica se AUTH_MODE incluir supabase_jwt.",
+        ...sessionTokens(data.session),
+        note: "API key emitida para conta existente. O JWT (access_token + refresh_token) também autentica se AUTH_MODE incluir supabase_jwt.",
       },
     });
   } catch (e) {
@@ -278,8 +294,34 @@ export async function loginBuyer(input = {}) {
 }
 
 /**
- * Emite nova key para user já autenticado.
+ * Troca refresh_token do Supabase por um novo par access/refresh.
+ * Não emite API key.
  */
+export async function refreshBuyerSession(refreshToken) {
+  if (!isSupabaseConfigured()) {
+    throw AppError.serviceUnavailable(
+      "Supabase não configurado — defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY",
+    );
+  }
+  const token = typeof refreshToken === "string" ? refreshToken.trim() : "";
+  if (!token) throw AppError.unauthorized("refresh_token é obrigatório");
+
+  const authClient = getSupabaseAuthClient();
+  if (!authClient) {
+    throw AppError.serviceUnavailable("Refresh indisponível — defina SUPABASE_ANON_KEY");
+  }
+
+  const { data, error } = await authClient.auth.refreshSession({ refresh_token: token });
+  if (error || !data?.session?.access_token) {
+    throw AppError.unauthorized("Sessão expirada. Entre novamente.");
+  }
+
+  return {
+    user_id: data.user?.id || data.session.user?.id || null,
+    ...sessionTokens(data.session),
+  };
+}
+
 export async function issueApiKeyForUser(userId, { name = "agent" } = {}) {
   if (!userId) throw AppError.unauthorized();
   try {

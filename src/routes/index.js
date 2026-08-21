@@ -8,6 +8,7 @@ import { assertCanSearch, publicAuthView } from "../auth/resolveAuth.js";
 import {
   registerBuyer,
   loginBuyer,
+  refreshBuyerSession,
   issueApiKeyForUser,
   getProfile,
   revokeUserApiKey,
@@ -97,6 +98,16 @@ export function createApiRouter() {
         fonte: req.body?.fonte || "API",
         key_name: req.body?.key_name || "api-login",
       });
+      res.status(200).json(out);
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  /** Troca refresh_token por novo JWT (não emite API key). */
+  router.post("/auth/refresh", authAbuseLimit, async (req, res, next) => {
+    try {
+      const out = await refreshBuyerSession(req.body?.refresh_token);
       res.status(200).json(out);
     } catch (err) {
       return next(err);

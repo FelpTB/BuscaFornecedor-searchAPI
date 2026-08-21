@@ -7,6 +7,7 @@ import { getPgPool, isPgPoolConfigured } from "../pgPool.js";
 import { AppError } from "../../errors/AppError.js";
 import { mapSupabaseError } from "../mapSupabaseError.js";
 import { logInfo } from "../../logger.js";
+import { canonicalizeFonte, limiteBuscasForFonte } from "../../auth/fonte.js";
 
 const SCHEMA = "busca_fornecedor";
 
@@ -64,16 +65,21 @@ export async function createCompradorProfile({
   telefone,
   empresa_nome,
   fonte = "Agente",
+  limite_buscas,
 }) {
   const sb = adminOrThrow();
+  const fonteCanon = canonicalizeFonte(fonte, "Agente");
   const row = {
     id: userId,
     nome: nome || null,
     telefone: telefone || null,
     empresa_nome: empresa_nome || null,
-    fonte,
+    fonte: fonteCanon,
     tier_busca: "normal",
-    limite_buscas: 50,
+    limite_buscas:
+      Number.isFinite(Number(limite_buscas)) && Number(limite_buscas) > 0
+        ? Math.floor(Number(limite_buscas))
+        : limiteBuscasForFonte(fonteCanon),
     buscas_realizadas: 0,
   };
   const { data, error } = await sb.schema(SCHEMA).from("usuario_comprador").insert(row).select().single();
