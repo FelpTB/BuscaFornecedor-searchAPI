@@ -5,7 +5,7 @@ import { runChatTurn, resetChatSession, resumeEmptyChatSession } from "./convers
 import { fetchCitiesNearby, getCitiesApiBase } from "../clients/citiesApi.js";
 import { executeSearchByText, getPublicConfig } from "../searchService.js";
 import { logError, logSuccess } from "../logger.js";
-import { resolveAuthContext, publicAuthView, assertCanSearch } from "../auth/resolveAuth.js";
+import { resolveAuthContext, publicAuthView, assertCanSearch, assertCanUseAgent } from "../auth/resolveAuth.js";
 import {
   registerBuyer,
   loginBuyer,
@@ -380,6 +380,7 @@ export function createXrayRouter() {
       } catch {
         auth = { authenticated: false, userId: null, roles: [], comprador: null, provider: "anonymous" };
       }
+      await assertCanUseAgent(auth);
 
       const sessionHint =
         typeof req.body?.session_id === "string" ? req.body.session_id.trim() : "";
@@ -464,6 +465,7 @@ export function createXrayRouter() {
       } catch {
         auth = { userId: null };
       }
+      await assertCanUseAgent(auth);
       const previousId =
         typeof req.body?.session_id === "string" ? req.body.session_id.trim() : "";
       if (auth?.userId) {
@@ -559,6 +561,7 @@ export function createXrayRouter() {
       let auth = null;
       try {
         auth = await resolveAuthContext(req.headers);
+        await assertCanUseAgent(auth);
         await assertCanSearch(auth);
       } catch (e) {
         if (e.status === 401 || e.status === 403) throw e;
@@ -616,6 +619,7 @@ export function createXrayRouter() {
       let auth = null;
       try {
         auth = await resolveAuthContext(req.headers);
+        await assertCanUseAgent(auth);
         await assertCanSearch(auth);
       } catch (e) {
         if (e.status === 401 || e.status === 403) throw e;

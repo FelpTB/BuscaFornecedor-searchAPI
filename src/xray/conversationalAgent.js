@@ -23,7 +23,7 @@ import {
   publicMessages,
 } from "./chatSessions.js";
 import { registerBuyer, loginBuyer, getProfile } from "../auth/registerBuyer.js";
-import { publicAuthView } from "../auth/resolveAuth.js";
+import { publicAuthView, assertCanUseAgent } from "../auth/resolveAuth.js";
 import { requireComprador } from "../config/env.js";
 import { isSupabaseConfigured } from "../db/supabaseAdmin.js";
 
@@ -355,6 +355,7 @@ function authFromBuyerResult(out) {
       tierBusca: c.tier_busca || "normal",
       limiteBuscas: Number(c.limite_buscas ?? 50),
       buscasRealizadas: Number(c.buscas_realizadas ?? 0),
+      acessoAgente: Boolean(c.acesso_agente),
     },
   };
 }
@@ -700,6 +701,8 @@ export async function runChatTurn({
     err.status = 400;
     throw err;
   }
+
+  await assertCanUseAgent(auth || {});
 
   if (search_params && typeof search_params === "object") {
     return runParamsRerunTurn({

@@ -55,6 +55,19 @@ export function requireComprador() {
   return v === "1" || v === "true" || v === "yes";
 }
 
+/**
+ * Gate do modo de busca com agente (`usuario_comprador.acesso_agente`).
+ * Produção: default ligado. Local/dev: default off (X-Ray interno).
+ */
+export function requireAcessoAgente() {
+  const raw = process.env.REQUIRE_ACESSO_AGENTE;
+  if (raw != null && String(raw).trim() !== "") {
+    const v = String(raw).trim().toLowerCase();
+    return v === "1" || v === "true" || v === "yes" || v === "on";
+  }
+  return isProductionRuntime();
+}
+
 /** Login emite nova API key? Prod default off; local/dev default on (X-Ray). */
 export function loginMintApiKey() {
   const raw = process.env.LOGIN_MINT_API_KEY;
@@ -202,6 +215,7 @@ export function getServerConfig() {
     authMode: getAuthMode(),
     authModes: getAuthModes(),
     requireComprador: requireComprador(),
+    requireAcessoAgente: requireAcessoAgente(),
     searchTimeoutMs: Number(process.env.SEARCH_TIMEOUT_MS) || 120_000,
   };
 }

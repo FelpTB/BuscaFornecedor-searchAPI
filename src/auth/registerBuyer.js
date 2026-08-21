@@ -58,6 +58,7 @@ function formatBuyerResult({ userId, email, comprador, stored, key, extra = {} }
       limite_buscas: comprador?.limite_buscas ?? limiteBuscasForFonte(comprador?.fonte),
       buscas_realizadas: comprador?.buscas_realizadas ?? 0,
       fonte: comprador?.fonte ?? null,
+      acesso_agente: Boolean(comprador?.acesso_agente),
     },
     api_key: stored && key
       ? {
@@ -260,6 +261,7 @@ export async function loginBuyer(input = {}) {
           limite_buscas: comprador?.limite_buscas ?? limiteBuscasForFonte(comprador?.fonte),
           buscas_realizadas: comprador?.buscas_realizadas ?? 0,
           fonte: comprador?.fonte ?? null,
+          acesso_agente: Boolean(comprador?.acesso_agente),
         },
         api_key: null,
         ...sessionTokens(data.session),
@@ -364,6 +366,7 @@ export async function getProfile(userId) {
           limite_buscas: comprador.limite_buscas,
           buscas_realizadas: comprador.buscas_realizadas,
           fonte: comprador.fonte,
+          acesso_agente: Boolean(comprador.acesso_agente),
         }
       : null,
     api_keys: keys.map((k) => ({

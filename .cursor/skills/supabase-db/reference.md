@@ -16,7 +16,8 @@ Complemento da skill `supabase-db`. Ler sob demanda.
 ### `busca_fornecedor.usuario_comprador`
 
 PK `id` = `auth.users.id`. Cotas: `limite_buscas`, `buscas_realizadas`, `tier_busca`.  
-`fonte`: Site | WhatsApp | **Agente** (cadastro via assistente/X-Ray/AgentUI). Cota inicial do Agente: `limite_buscas = 500`.
+`fonte`: Site | WhatsApp | **Agente** (cadastro via assistente/X-Ray/AgentUI). Cota inicial do Agente: `limite_buscas = 500`.  
+`acesso_agente` (boolean, default false): allowlist do modo de busca com agente. Só quem está `true` usa `/search/xray/chat` em produção. Migration `009_acesso_agente.sql`. Alteração da flag: service_role/postgres (trigger bloqueia `authenticated`).
 
 ### `busca_fornecedor.consultas`
 

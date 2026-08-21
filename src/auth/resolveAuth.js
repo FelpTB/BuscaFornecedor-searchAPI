@@ -4,7 +4,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { getAuthModes, requireComprador } from "../config/env.js";
+import { getAuthModes, requireComprador, requireAcessoAgente } from "../config/env.js";
 import { AppError } from "../errors/AppError.js";
 import { getSupabaseAdmin, isSupabaseConfigured } from "../db/supabaseAdmin.js";
 import {
@@ -27,7 +27,7 @@ const CACHE_TTL_MS = Number(process.env.AUTH_CACHE_TTL_MS) || 120_000;
  *   provider: 'anonymous'|'api_key'|'supabase'|'entra'|'env_key',
  *   roles: string[],
  *   scopes: string[],
- *   comprador: { nome: string|null, tierBusca: string, limiteBuscas: number, buscasRealizadas: number }|null
+ *   comprador: { nome: string|null, tierBusca: string, limiteBuscas: number, buscasRealizadas: number, acessoAgente: boolean }|null
  * }} AuthContext
  */
 
@@ -123,6 +123,7 @@ function mapComprador(row) {
     tierBusca: row.tier_busca || "normal",
     limiteBuscas: Number(row.limite_buscas ?? 50),
     buscasRealizadas: Number(row.buscas_realizadas ?? 0),
+    acessoAgente: Boolean(row.acesso_agente),
   };
 }
 
@@ -337,6 +338,47 @@ export async function assertCanSearch(auth) {
   if (limiteBuscas != null && buscasRealizadas >= limiteBuscas) {
     throw AppError.forbidden(
       `Cota de buscas esgotada (${buscasRealizadas}/${limiteBuscas}).`,
+    );
+  }
+}
+
+/**
+ * Gate do modo de busca com agente (chat / X-Ray agent).
+ * Produção: só `usuario_comprador.acesso_agente = true`.
+ * Bypass: AUTH_MODE=off, REQUIRE_ACESSO_AGENTE=0, provider env_key.
+ * @param {AuthContext|null|undefined} auth
+ */
+export async function assertCanUseAgent(auth) {
+  if (!requireAcessoAgente()) return;
+  if (!authModeRequiresCredential()) return;
+  if (auth?.provider === "env_key") return;
+
+  if (!auth?.authenticated || !auth.userId) {
+    throw AppError.unauthorized(
+      "O modo de busca com agente exige autenticação. Faça login para continuar.",
+    );
+  }
+
+  let acessoAgente = Boolean(auth.comprador?.acessoAgente);
+  try {
+    const row = await getCompradorById(auth.userId);
+    if (row) {
+      const comprador = mapComprador(row);
+      auth.comprador = comprador;
+      auth.roles = Array.from(new Set([...(auth.roles || []), "comprador"]));
+      acessoAgente = Boolean(comprador.acessoAgente);
+    } else {
+      acessoAgente = false;
+    }
+  } catch (e) {
+    console.error("[auth] assertCanUseAgent comprador refresh failed:", e.message);
+  }
+
+  if (!acessoAgente) {
+    throw new AppError(
+      "O modo de busca com agente está disponível apenas para usuários habilitados.",
+      403,
+      { code: "ACESSO_AGENTE_NEGADO" },
     );
   }
 }

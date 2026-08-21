@@ -51,7 +51,7 @@ export async function getCompradorById(userId) {
     .schema(SCHEMA)
     .from("usuario_comprador")
     .select(
-      "id, nome, telefone, empresa_nome, tier_busca, limite_buscas, buscas_realizadas, fonte",
+      "id, nome, telefone, empresa_nome, tier_busca, limite_buscas, buscas_realizadas, fonte, acesso_agente",
     )
     .eq("id", userId)
     .maybeSingle();

@@ -66,6 +66,7 @@ export function createApp() {
       auth_mode: serverCfg.authMode,
       auth_modes: serverCfg.authModes,
       require_comprador: serverCfg.requireComprador,
+      require_acesso_agente: serverCfg.requireAcessoAgente,
       uptime: process.uptime(),
     });
   });
