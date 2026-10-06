@@ -426,6 +426,7 @@ export function createXrayRouter() {
             searchPayload: bundle.search,
             requestParams: {
               ...(bundle.mcp_tool_call?.arguments || {}),
+              weights: bundle.mcp_tool_call?.arguments?.weights ?? bundle.search?.weights_used,
               intent: bundle.intent,
             },
             source: agentSearchSource(req),
