@@ -21,6 +21,15 @@ import { isPgPoolConfigured } from "./db/pgPool.js";
 import { getTelemetryMode } from "./telemetry/enqueue.js";
 import { getNotificacaoMode, isNotificacaoConfigured, getNotificacaoApiBase } from "./clients/notificacaoClient.js";
 import { mergeBm25Query, resolveExactTerms, detectQuerySpecificity, stripBm25Weight } from "./search/bm25Query.js";
+import {
+  SEARCH_FOCUS_VALUES,
+  WEIGHT_PRESET_VALUES,
+  WEIGHT_PRESETS,
+  normalizeSearchFocus,
+  normalizeWeightPreset,
+  buildPresetWeights,
+  applySearchFocus,
+} from "./search/weightPresets.js";
 
 const COLLECTION_NAME = process.env.COLLECTION_NAME;
 const ENDPOINT_SEARCH_TEXT = "POST /search/text";
@@ -589,6 +598,19 @@ async function executeSearchByText(rawBody = {}, options = {}) {
     throw err;
   }
 
+  const searchFocus = normalizeSearchFocus(body.search_focus);
+  if (searchFocus === null) {
+    const err = new Error(`Campo 'search_focus' inválido. Valores: ${SEARCH_FOCUS_VALUES.join(", ")}`);
+    err.status = 400;
+    throw err;
+  }
+  const weightPreset = normalizeWeightPreset(body.weight_preset);
+  if (weightPreset === null) {
+    const err = new Error(`Campo 'weight_preset' inválido. Valores: ${WEIGHT_PRESET_VALUES.join(", ")}`);
+    err.status = 400;
+    throw err;
+  }
+
   const dimensionKeys = getDimensionKeys();
   const queries = queriesCoerced.value;
   if (queries) {
@@ -621,9 +643,35 @@ async function executeSearchByText(rawBody = {}, options = {}) {
     : "";
   const bm25_query = useBm25 ? mergeBm25Query(bm25Base, exactTerms) || undefined : undefined;
 
-  let weights =
-    weightsCoerced.value ??
-    buildEqualWeights(dimensionKeys, Boolean(bm25_query));
+  let weights;
+  let weightsSource;
+  if (weightsCoerced.value) {
+    weights = weightsCoerced.value;
+    weightsSource = "explicit";
+  } else if (weightPreset) {
+    weights = buildPresetWeights(weightPreset, dimensionKeys);
+    weightsSource = "preset";
+  }
+  if (!weights) {
+    weights = buildEqualWeights(dimensionKeys, Boolean(bm25_query));
+    weightsSource = "default";
+  }
+  if (searchFocus) {
+    const focused = applySearchFocus(
+      weights,
+      searchFocus,
+      dimensionKeys,
+      weightsSource === "preset" ? weightPreset : undefined,
+    );
+    if (!focused) {
+      const err = new Error(
+        `search_focus requer dimensões de produto e serviço na coleção. Dimensões: ${dimensionKeys.join(", ")}`,
+      );
+      err.status = 400;
+      throw err;
+    }
+    weights = focused;
+  }
   if (bm25_query) {
     weights = ensureBm25Weight(weights, dimensionKeys) || weights;
   } else {
@@ -688,6 +736,9 @@ async function executeSearchByText(rawBody = {}, options = {}) {
       has_filter: Boolean(filterCoerced.value),
       bm25: Boolean(bm25_query),
       rerank: rerankMode,
+      weights_source: weightsSource,
+      weight_preset: weightPreset || null,
+      search_focus: searchFocus || null,
     });
 
     const payload = await runMultiVectorSearch({
@@ -705,6 +756,10 @@ async function executeSearchByText(rawBody = {}, options = {}) {
       embedding_model: "text-embedding-3-small",
       embedding_dims,
       query_texts: perDimText,
+      weights_used: weights,
+      weights_source: weightsSource,
+      weight_preset: weightPreset || null,
+      search_focus: searchFocus || null,
       latency_ms: Date.now() - start,
     };
   } catch (err) {
@@ -733,6 +788,23 @@ function getPublicConfig() {
     vector_names,
     filter_not_supported: true,
     full_text_filter_supported: payload_keys_full_text.length > 0,
+    weight_presets: {
+      values: WEIGHT_PRESET_VALUES,
+      dense_weights: WEIGHT_PRESETS,
+      precedence: "weights explícito > weight_preset > pesos iguais",
+      bm25: "Com BM25 ativo, bm25 recebe 0.20 e os pesos densos são reescalados para 0.80",
+    },
+    search_focus: {
+      values: SEARCH_FOCUS_VALUES,
+      behavior:
+        "produto zera o peso de servico, servico zera o de produto; mista mantém ambos. Destino do peso zerado por preset:",
+      redistribution: {
+        escopo: "dimensão em foco",
+        equilibrado: "dividido igualmente entre todas as dimensões densas restantes",
+        publico_alvo: "dividido igualmente entre publico e cliente",
+        sem_preset: "dimensão em foco (pesos explícitos ou padrão)",
+      },
+    },
     bm25: {
       vector_name: bm25VectorName,
       payload_keys: bm25_payload_keys.length > 0 ? bm25_payload_keys : null,

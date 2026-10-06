@@ -1,0 +1,137 @@
+{
+  "sector": "construcao_civil",
+  "families": [
+    {
+      "id": "concreto",
+      "focus": "produto",
+      "escopo": "Concreto usinado / concreteira (fornecimento de concreto pronto, bombeado)",
+      "publico": "Construtoras e incorporadoras de edifícios residenciais",
+      "variations": [
+        "concreto usinado para construtoras de edifícios residenciais",
+        "fornecedor de concreto usinado bombeado que atende incorporadoras e construtoras de prédios",
+        "concreteira para obras verticais residenciais de construtoras"
+      ]
+    },
+    {
+      "id": "impermeabilizacao",
+      "focus": "servico",
+      "escopo": "Serviço de impermeabilização (lajes, coberturas, terraços, reservatórios)",
+      "publico": "Condomínios residenciais, síndicos e administradoras de condomínio",
+      "variations": [
+        "impermeabilização de lajes e coberturas para condomínios residenciais",
+        "empresa de impermeabilização que atende síndicos e administradoras de condomínio",
+        "serviço de impermeabilização de terraços e reservatórios em condomínios"
+      ]
+    },
+    {
+      "id": "andaimes",
+      "focus": "servico",
+      "escopo": "Locação de andaimes, balancins e equipamentos de acesso em altura",
+      "publico": "Empreiteiras, construtoras e empresas de manutenção predial/fachadas",
+      "variations": [
+        "locação de andaimes para reforma de fachadas de prédios",
+        "aluguel de andaimes fachadeiros para empreiteiras e construtoras",
+        "andaimes e balancins para manutenção predial de edifícios"
+      ]
+    },
+    {
+      "id": "estrutura_metalica",
+      "focus": "mista",
+      "escopo": "Estruturas metálicas (fabricação e montagem de estruturas de aço)",
+      "publico": "Indústrias, operadores logísticos e condomínios logísticos (galpões, armazéns)",
+      "variations": [
+        "estrutura metálica para galpões industriais e centros logísticos",
+        "fabricante de estruturas de aço para construção de galpões de indústrias",
+        "montagem de estrutura metálica para armazéns e condomínios logísticos"
+      ]
+    },
+    {
+      "id": "fundacoes",
+      "focus": "servico",
+      "escopo": "Fundações profundas, estaqueamento (hélice contínua, estacas) e sondagem de solo",
+      "publico": "Construtoras e incorporadoras de obras verticais e de grande porte",
+      "variations": [
+        "estaqueamento e fundações profundas para construtoras",
+        "execução de estaca hélice contínua para incorporadoras e obras verticais",
+        "serviços de fundação e sondagem de solo para obras de grande porte"
+      ]
+    },
+    {
+      "id": "pisos_industriais",
+      "focus": "servico",
+      "escopo": "Pisos industriais (concreto polido, epóxi, revestimentos de alta resistência)",
+      "publico": "Indústrias (inclusive alimentícias), armazéns e centros de distribuição",
+      "variations": [
+        "piso industrial de concreto polido para fábricas e armazéns",
+        "execução de pisos industriais para indústrias e centros de distribuição",
+        "revestimento de piso epóxi para indústrias alimentícias"
+      ]
+    },
+    {
+      "id": "materiais_basicos",
+      "focus": "produto",
+      "escopo": "Materiais básicos de construção (cimento, areia, brita, aço, blocos)",
+      "publico": "Órgãos públicos, prefeituras, licitações e obras de infraestrutura",
+      "variations": [
+        "materiais de construção para obras públicas e prefeituras",
+        "fornecedor de cimento, areia e brita que atende licitações de órgãos públicos",
+        "distribuidor de materiais básicos de construção para governo e obras de infraestrutura"
+      ]
+    },
+    {
+      "id": "esquadrias",
+      "focus": "produto",
+      "escopo": "Esquadrias de alumínio, janelas, portas e caixilhos com vidro",
+      "publico": "Residências de alto padrão, arquitetos e obras residenciais de luxo",
+      "variations": [
+        "esquadrias de alumínio para residências de alto padrão",
+        "fabricante de janelas e portas de alumínio para arquitetos e casas de luxo",
+        "caixilhos de alumínio e vidro sob medida para obras residenciais de alto padrão"
+      ]
+    },
+    {
+      "id": "drywall",
+      "focus": "servico",
+      "escopo": "Drywall, gesso acartonado, forros e divisórias (instalação)",
+      "publico": "Empresas, escritórios corporativos, lojas e salas comerciais",
+      "variations": [
+        "instalação de drywall e forros para escritórios corporativos",
+        "divisórias de gesso acartonado para reforma de lojas e escritórios",
+        "empresa de drywall que atende empresas em retrofit de salas comerciais"
+      ]
+    },
+    {
+      "id": "terraplenagem",
+      "focus": "servico",
+      "escopo": "Terraplenagem, movimentação de terra e locação de máquinas pesadas",
+      "publico": "Loteadoras, incorporadoras de condomínios horizontais e obras de infraestrutura urbana",
+      "variations": [
+        "terraplenagem e movimentação de terra para loteamentos",
+        "serviços de terraplenagem para loteadoras e incorporadoras de condomínios horizontais",
+        "locação de máquinas para terraplanagem em obras de infraestrutura urbana"
+      ]
+    },
+    {
+      "id": "eletrica_predial",
+      "focus": "servico",
+      "escopo": "Instalações elétricas prediais (média e baixa tensão, projeto e execução)",
+      "publico": "Hospitais, clínicas e edifícios comerciais",
+      "variations": [
+        "instalações elétricas prediais para hospitais e clínicas",
+        "empresa de instalação elétrica de média e baixa tensão para edifícios comerciais",
+        "projeto e execução de instalações elétricas em obras hospitalares"
+      ]
+    },
+    {
+      "id": "pre_moldados",
+      "focus": "produto",
+      "escopo": "Pré-moldados / pré-fabricados de concreto (pilares, vigas, estruturas)",
+      "publico": "Agronegócio, produtores rurais (barracões, armazéns de grãos) e obras industriais",
+      "variations": [
+        "pré-moldados de concreto para construção de barracões rurais",
+        "estruturas pré-fabricadas de concreto para agronegócio e armazéns de grãos",
+        "fabricante de pilares e vigas pré-moldadas para obras industriais"
+      ]
+    }
+  ]
+}

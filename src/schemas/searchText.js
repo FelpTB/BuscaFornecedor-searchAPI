@@ -1,5 +1,11 @@
 import { z } from "zod";
 import { LIMITS } from "../config/env.js";
+import {
+  SEARCH_FOCUS_VALUES,
+  WEIGHT_PRESET_VALUES,
+  normalizeSearchFocus,
+  normalizeWeightPreset,
+} from "../search/weightPresets.js";
 
 /**
  * Schema compartilhado REST + MCP para POST /search/text e tool search_text.
@@ -29,7 +35,19 @@ export const searchTextInputShape = {
     .record(z.string(), z.number())
     .optional()
     .describe(
-      "Pesos por dimensão (+ bm25 se híbrido). Soma deve ser 1.0. Se omitido, pesos iguais.",
+      "Pesos por dimensão (+ bm25 se híbrido). Soma deve ser 1.0. Se omitido, usa weight_preset ou, sem ele, pesos iguais.",
+    ),
+  weight_preset: z
+    .enum(WEIGHT_PRESET_VALUES)
+    .optional()
+    .describe(
+      "Pré-configuração de pesos: escopo (natureza do produto/serviço buscado), publico_alvo (público atendido pelas empresas) ou equilibrado. Ignorado se weights for enviado.",
+    ),
+  search_focus: z
+    .enum(SEARCH_FOCUS_VALUES)
+    .optional()
+    .describe(
+      "Foco da busca: produto (zera o vetor servico), servico (zera o vetor produto) ou mista (ambos ativos). Destino do peso zerado: escopo ou sem preset → dimensão em foco; equilibrado → dividido igualmente entre as demais dimensões; publico_alvo → dividido entre publico e cliente.",
     ),
   filter: z
     .record(z.string(), filterValueSchema)
@@ -126,6 +144,12 @@ export function parseSearchTextBody(raw) {
       }
     }
   }
+
+  // Aceita variações de grafia ("Serviço", "Publico Alvo", "misto"); valores inválidos seguem para o enum do Zod
+  const focus = normalizeSearchFocus(body.search_focus);
+  if (focus !== null) body.search_focus = focus;
+  const preset = normalizeWeightPreset(body.weight_preset);
+  if (preset !== null) body.weight_preset = preset;
 
   const result = searchTextBodySchema.safeParse(body);
   if (!result.success) {

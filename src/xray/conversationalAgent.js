@@ -6,7 +6,13 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import { fetchCitiesNearby } from "../clients/citiesApi.js";
-import { planSearchToolCall, planSearchFromParams, normalizeUfList, formatUfFilterValue } from "./searchAgent.js";
+import {
+  planSearchToolCall,
+  planSearchFromParams,
+  normalizeUfList,
+  formatUfFilterValue,
+  applySearchPrefs,
+} from "./searchAgent.js";
 import { resolveExactTerms } from "../search/bm25Query.js";
 import { runFallbackCascade } from "../search/fallbackSearch.js";
 import {
@@ -557,6 +563,7 @@ async function executeTool(name, args, ctx) {
           userQuery: briefing,
         }),
       });
+      applySearchPrefs(plan.mcp_tool_call.arguments, defaults.search_prefs);
       const searchStarted = Date.now();
       const search = await executeSearchByText(plan.mcp_tool_call.arguments, {
         debug: plan.mcp_tool_call.arguments.debug === true,
@@ -694,6 +701,7 @@ export async function runChatTurn({
   assertCanSearch = null,
   onSearchCompleted = null,
   search_params = null,
+  search_prefs = null,
 }) {
   const text = typeof message === "string" ? message.trim() : "";
   if (!text) {
@@ -717,6 +725,7 @@ export async function runChatTurn({
       auth,
       assertCanSearch,
       onSearchCompleted,
+      search_prefs,
     });
   }
 
@@ -751,6 +760,7 @@ export async function runChatTurn({
           : 10,
       debug: debug === true,
       rerank: rerank === true,
+      search_prefs,
     },
     onSearch: (bundle) => {
       lastSearchBundle = bundle;
@@ -954,6 +964,7 @@ async function runParamsRerunTurn({
   auth = null,
   assertCanSearch = null,
   onSearchCompleted = null,
+  search_prefs = null,
 }) {
   const started = Date.now();
   const session = getOrCreateSession(session_id, {
@@ -969,6 +980,7 @@ async function runParamsRerunTurn({
     debug,
     rerank,
   });
+  applySearchPrefs(plan.mcp_tool_call.arguments, search_prefs);
   const searchStarted = Date.now();
   const search = await executeSearchByText(plan.mcp_tool_call.arguments, {
     debug: plan.mcp_tool_call.arguments.debug === true,

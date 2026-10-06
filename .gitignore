@@ -8,3 +8,4 @@ _scaffold.mjs
 .railway/
 .cursor/mcp.json
 _vendor_apis/
+eval-output/

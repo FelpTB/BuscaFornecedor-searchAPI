@@ -951,6 +951,20 @@ function coerceWeightMap(raw, dimensionKeys, includeBm25) {
   return out;
 }
 
+/**
+ * Preferências escolhidas na UI: weight_preset substitui os pesos do Query Manager
+ * (weights explícitos teriam precedência no searchService); search_focus é repassado.
+ */
+export function applySearchPrefs(args, prefs) {
+  if (!args || !prefs) return args;
+  if (prefs.weight_preset) {
+    delete args.weights;
+    args.weight_preset = prefs.weight_preset;
+  }
+  if (prefs.search_focus) args.search_focus = prefs.search_focus;
+  return args;
+}
+
 /** Executa tool call manual (sem LLM). */
 export async function runManualToolCall({ toolArguments, executeSearchByText }) {
   const args = toolArguments && typeof toolArguments === "object" ? toolArguments : {};

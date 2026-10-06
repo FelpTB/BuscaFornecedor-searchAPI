@@ -43,6 +43,12 @@ import { AppError } from "../errors/AppError.js";
 import { forgetSession } from "./chatSessions.js";
 import { getAuthModes, getAuthMode } from "../config/env.js";
 import { createRateLimiter } from "../middleware/rateLimit.js";
+import {
+  SEARCH_FOCUS_VALUES,
+  WEIGHT_PRESET_VALUES,
+  normalizeSearchFocus,
+  normalizeWeightPreset,
+} from "../search/weightPresets.js";
 
 function headerValue(headers, name) {
   const raw = headers?.[name] || headers?.[name.toLowerCase()];
@@ -393,6 +399,15 @@ export function createXrayRouter() {
           ? req.body.search_params
           : null;
 
+      const weight_preset = normalizeWeightPreset(req.body?.weight_preset);
+      const search_focus = normalizeSearchFocus(req.body?.search_focus);
+      if (weight_preset === null || search_focus === null) {
+        throw AppError.badRequest(
+          `weight_preset (${WEIGHT_PRESET_VALUES.join(", ")}) ou search_focus (${SEARCH_FOCUS_VALUES.join(", ")}) inválido`,
+        );
+      }
+      const search_prefs = weight_preset || search_focus ? { weight_preset, search_focus } : null;
+
       const out = await runChatTurn({
         session_id: req.body?.session_id,
         message,
@@ -402,6 +417,7 @@ export function createXrayRouter() {
         debug: req.body?.debug === true,
         rerank: req.body?.rerank === true,
         search_params,
+        search_prefs,
         auth,
         assertCanSearch,
         onSearchCompleted: (bundle, turnAuth, sid) => {

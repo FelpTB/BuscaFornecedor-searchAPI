@@ -154,6 +154,7 @@ export function getSearchXrayHtml() {
     .composer textarea { flex: 1; min-height: 52px; max-height: 140px; }
     .opts { display: flex; gap: 0.65rem; align-items: center; flex-wrap: wrap; }
     .opts label { font-size: 0.8rem; color: var(--muted); display: flex; gap: 0.3rem; align-items: center; }
+    .opts select { padding: 0.25rem 0.45rem; font-size: 0.8rem; }
     .opts input[type="number"] {
       width: 68px; padding: 0.25rem 0.35rem; border-radius: 6px;
       border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
@@ -238,6 +239,7 @@ export function getSearchXrayHtml() {
       <button type="button" class="ghost" id="btnUseKey">Usar chave</button>
       <span class="badge" id="authBadge">auth: …</span>
       <span class="hint" id="configHint">Carregando /config…</span>
+      <a class="ghost" href="/docs" target="_blank" rel="noopener" style="margin-left:auto;text-decoration:none;padding:0.4rem 0.7rem;border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:0.82rem">Documentação da API</a>
     </div>
 
     <div class="mode-tabs">
@@ -274,6 +276,22 @@ export function getSearchXrayHtml() {
               <label>final_limit <input type="number" id="final_limit" min="1" max="100" value="10"></label>
               <label><input type="checkbox" id="forceDebug"> debug</label>
               <label><input type="checkbox" id="forceRerank"> rerank</label>
+              <label title="Pré-configuração de pesos. Auto = pesos do Query Manager.">pré-config
+                <select id="weightPreset">
+                  <option value="">auto (QM)</option>
+                  <option value="escopo">escopo</option>
+                  <option value="publico_alvo">público-alvo</option>
+                  <option value="equilibrado">equilibrado</option>
+                </select>
+              </label>
+              <label title="Produto zera o vetor de serviço; serviço zera o de produto; mista mantém ambos.">foco
+                <select id="searchFocus">
+                  <option value="">auto</option>
+                  <option value="produto">produto</option>
+                  <option value="servico">serviço</option>
+                  <option value="mista">mista</option>
+                </select>
+              </label>
             </div>
             <div class="composer-row">
               <textarea id="message" rows="2" placeholder="Ex.: preciso de caroço de açaí seco perto de Belém…" required></textarea>
@@ -375,7 +393,7 @@ export function getSearchXrayHtml() {
           <button type="button" class="primary" id="btnManual">Executar search_text</button>
         </div>
         <textarea id="manualJson" spellcheck="false"></textarea>
-        <p class="hint">JSON = arguments da tool MCP search_text.</p>
+        <p class="hint">JSON = arguments da tool MCP search_text. <code>weight_preset</code>: escopo | publico_alvo | equilibrado · <code>search_focus</code>: produto | servico | mista · <code>weights</code> explícito prevalece sobre o preset. <a href="/docs/guia#5-pré-configurações-e-foco-da-busca" target="_blank" rel="noopener">Ver documentação</a></p>
         <div id="manualError" class="error"></div>
       </div>
     </div>
@@ -529,10 +547,13 @@ export function getSearchXrayHtml() {
       $("typing")?.remove();
     }
 
-    function renderChips(args) {
+    function renderChips(args, search) {
       if (!args) { $("paramChips").innerHTML = ""; return; }
       const chips = [];
-      if (args.weights) for (const [k, v] of Object.entries(args.weights))
+      if (args.weight_preset) chips.push("<span class='chip'><b>pré-config</b> " + esc(args.weight_preset) + "</span>");
+      if (args.search_focus) chips.push("<span class='chip'><b>foco</b> " + esc(args.search_focus) + "</span>");
+      const weights = search?.weights_used || args.weights;
+      if (weights) for (const [k, v] of Object.entries(weights))
         chips.push("<span class='chip'><b>" + esc(k) + "</b> " + Number(v).toFixed(3) + "</span>");
       if (args.bm25_query) chips.push("<span class='chip'><b>bm25</b> " + esc(args.bm25_query) + "</span>");
       if (args.filter) chips.push("<span class='chip'><b>filter</b> " + esc(JSON.stringify(args.filter)) + "</span>");
@@ -566,7 +587,13 @@ export function getSearchXrayHtml() {
         tool: d.mcp_tool_call,
         qm: d.query_manager || null,
         geo: d.geo || null,
-        weights: args.weights || {},
+        weights: {
+          weights_source: d.search?.weights_source ?? null,
+          weight_preset: d.search?.weight_preset ?? args.weight_preset ?? null,
+          search_focus: d.search?.search_focus ?? args.search_focus ?? null,
+          weights_requested: args.weights || null,
+          weights_used: d.search?.weights_used || null,
+        },
         meta: {
           simulation: d.simulation,
           intent: d.intent,
@@ -626,7 +653,7 @@ export function getSearchXrayHtml() {
     function showSearchSide(data) {
       if (!data?.mcp_tool_call && !data?.search) return;
       state.last = data;
-      renderChips(data.mcp_tool_call?.arguments);
+      renderChips(data.mcp_tool_call?.arguments, data.search);
       renderXray();
       if (data.search) renderResults(data.search);
       const sid = data.search?.search_id || data.search_id;
@@ -667,14 +694,10 @@ export function getSearchXrayHtml() {
     }
 
     function templateArgs() {
-      const dims = state.config?.dimension_keys || ["produto","servico","descricao","publico","cliente"];
-      const w = {};
-      const eq = 1 / dims.length;
-      dims.forEach((d) => { w[d] = Number(eq.toFixed(4)); });
       return {
         query: "energia solar residencial",
-        queries: Object.fromEntries(dims.map((d) => [d, "energia solar"])),
-        weights: w,
+        weight_preset: "equilibrado",
+        search_focus: "servico",
         filter: { uf: "SP" },
         bm25: true,
         bm25_query: "energia solar fotovoltaica",
@@ -710,6 +733,8 @@ export function getSearchXrayHtml() {
             final_limit: Number($("final_limit").value) || 10,
             debug: $("forceDebug").checked,
             rerank: $("forceRerank").checked,
+            weight_preset: $("weightPreset").value || undefined,
+            search_focus: $("searchFocus").value || undefined,
           }),
         });
         const data = await res.json();
@@ -1251,6 +1276,12 @@ export function getSearchXrayHtml() {
 
     const savedKey = localStorage.getItem("xray_api_key");
     if (savedKey) $("apiKey").value = savedKey;
+
+    for (const id of ["weightPreset", "searchFocus"]) {
+      const saved = localStorage.getItem("xray_" + id);
+      if (saved != null) $(id).value = saved;
+      $(id).addEventListener("change", () => localStorage.setItem("xray_" + id, $(id).value));
+    }
 
     $("apiKey").addEventListener("change", () => {
       localStorage.setItem("xray_api_key", $("apiKey").value.trim());

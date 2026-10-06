@@ -54,7 +54,8 @@ export function createMcpServer(deps) {
       title: "Busca de fornecedores por texto",
       description:
         "Busca empresas/fornecedores (Qdrant híbrido: densos + BM25 dual-path RRF). " +
-        "Suporta weights, filter, filter_not, bm25, limites e rerank LLM. " +
+        "Suporta weights, weight_preset (escopo|publico_alvo|equilibrado), search_focus (produto|servico|mista), " +
+        "filter, filter_not, bm25, limites e rerank LLM. " +
         "Use get_config para chaves permitidas. Mesma lógica de POST /search/text.",
       inputSchema: searchTextInputShape,
       annotations: {
@@ -77,7 +78,7 @@ export function createMcpServer(deps) {
         maybeEnqueueFromSearch({
           auth,
           searchPayload: result,
-          requestParams: args || {},
+          requestParams: { ...(args || {}), weights: args?.weights ?? result.weights_used },
           source: "mcp",
         });
 

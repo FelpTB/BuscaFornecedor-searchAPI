@@ -239,7 +239,7 @@ export function createApiRouter() {
       const telemetry = maybeEnqueueFromSearch({
         auth: req.auth,
         searchPayload: payload,
-        requestParams: parsed.data,
+        requestParams: { ...parsed.data, weights: parsed.data.weights ?? payload.weights_used },
         source: "rest",
       });
 

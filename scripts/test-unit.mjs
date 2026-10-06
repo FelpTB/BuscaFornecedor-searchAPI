@@ -39,6 +39,13 @@ import {
   resolveExactTerms,
   stripBm25Weight,
 } from "../src/search/bm25Query.js";
+import {
+  WEIGHT_PRESETS,
+  applySearchFocus,
+  buildPresetWeights,
+  normalizeSearchFocus,
+  normalizeWeightPreset,
+} from "../src/search/weightPresets.js";
 
 process.env.AUTH_MODE = "off";
 process.env.QDRANT_DIMENSION_KEYS =
@@ -91,6 +98,84 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(ok.success, true);
   assert.equal(ok.data.query, "energia solar");
   console.log("OK schema search_text");
+}
+
+{
+  assert.equal(normalizeSearchFocus("Serviço"), "servico");
+  assert.equal(normalizeSearchFocus("misto"), "mista");
+  assert.equal(normalizeSearchFocus(""), undefined);
+  assert.equal(normalizeSearchFocus("tudo"), null);
+  assert.equal(normalizeWeightPreset("Público Alvo"), "publico_alvo");
+  assert.equal(normalizeWeightPreset("Equilibrada"), "equilibrado");
+  assert.equal(normalizeWeightPreset("xyz"), null);
+
+  const parsed = parseSearchTextBody({ query: "x", search_focus: "Produto", weight_preset: "Escopo" });
+  assert.equal(parsed.success, true);
+  assert.equal(parsed.data.search_focus, "produto");
+  assert.equal(parsed.data.weight_preset, "escopo");
+  assert.equal(parseSearchTextBody({ query: "x", search_focus: "tudo" }).success, false);
+  assert.equal(parseSearchTextBody({ query: "x", weight_preset: "xyz" }).success, false);
+  console.log("OK schema search_focus / weight_preset");
+}
+
+{
+  const dims = ["produto", "servico", "descricao", "publico", "cliente"];
+  const sum = (w) => Object.values(w).reduce((a, b) => a + b, 0);
+  for (const preset of Object.keys(WEIGHT_PRESETS)) {
+    const w = buildPresetWeights(preset, dims);
+    assert.ok(Math.abs(sum(w) - 1) < 1e-6, `${preset} sum=${sum(w)}`);
+  }
+  const escopo = buildPresetWeights("escopo", dims);
+  const publico = buildPresetWeights("publico_alvo", dims);
+  assert.ok(escopo.produto + escopo.servico > publico.produto + publico.servico);
+  assert.ok(publico.publico + publico.cliente > escopo.publico + escopo.cliente);
+
+  const focoProduto = applySearchFocus(escopo, "produto", dims);
+  assert.equal(focoProduto.servico, 0);
+  assert.ok(Math.abs(focoProduto.produto - (escopo.produto + escopo.servico)) < 1e-9);
+  assert.equal(focoProduto.descricao, escopo.descricao);
+  assert.ok(Math.abs(sum(focoProduto) - 1) < 1e-6);
+
+  const focoServico = applySearchFocus(publico, "servico", dims);
+  assert.equal(focoServico.produto, 0);
+  assert.ok(Math.abs(focoServico.servico - (publico.produto + publico.servico)) < 1e-9);
+  assert.equal(focoServico.publico, publico.publico);
+
+  assert.deepEqual(applySearchFocus(escopo, "mista", dims), escopo);
+
+  const withBm25 = { produto: 0.3, servico: 0.2, descricao: 0.1, publico: 0.1, cliente: 0.1, bm25: 0.2 };
+  const focoBm25 = applySearchFocus(withBm25, "produto", dims);
+  assert.equal(focoBm25.bm25, 0.2);
+  assert.equal(focoBm25.produto, 0.5);
+  assert.equal(focoBm25.servico, 0);
+
+  assert.equal(applySearchFocus(escopo, "produto", ["descricao", "publico"]), null);
+
+  const escopoFoco = applySearchFocus(escopo, "servico", dims, "escopo");
+  assert.equal(escopoFoco.produto, 0);
+  assert.ok(Math.abs(escopoFoco.servico - (escopo.produto + escopo.servico)) < 1e-9);
+
+  const equilibrado = buildPresetWeights("equilibrado", dims);
+  const eqFoco = applySearchFocus(equilibrado, "produto", dims, "equilibrado");
+  const eqShare = equilibrado.servico / 4;
+  assert.equal(eqFoco.servico, 0);
+  for (const k of ["produto", "descricao", "publico", "cliente"]) {
+    assert.ok(Math.abs(eqFoco[k] - (equilibrado[k] + eqShare)) < 1e-6, `equilibrado ${k}=${eqFoco[k]}`);
+  }
+  assert.ok(Math.abs(sum(eqFoco) - 1) < 1e-6);
+
+  const pubFoco = applySearchFocus(publico, "servico", dims, "publico_alvo");
+  assert.equal(pubFoco.produto, 0);
+  assert.equal(pubFoco.servico, publico.servico);
+  assert.equal(pubFoco.descricao, publico.descricao);
+  assert.ok(Math.abs(pubFoco.publico - (publico.publico + publico.produto / 2)) < 1e-6);
+  assert.ok(Math.abs(pubFoco.cliente - (publico.cliente + publico.produto / 2)) < 1e-6);
+  assert.ok(Math.abs(sum(pubFoco) - 1) < 1e-6);
+
+  const pubBm25 = applySearchFocus({ ...withBm25 }, "produto", dims, "publico_alvo");
+  assert.equal(pubBm25.bm25, 0.2);
+  assert.ok(Math.abs(sum(pubBm25) - sum(withBm25)) < 1e-6);
+  console.log("OK weight presets + search focus");
 }
 
 {
