@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node scripts/test-unit.mjs",
-    "test:mcp": "node scripts/test-mcp-sdk.mjs"
+    "test:mcp": "node scripts/test-mcp-sdk.mjs",
+    "eval:presets": "node scripts/eval/weight-presets.mjs"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -21,6 +22,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
     "helmet": "^8.3.0",
+    "marked": "^16.4.2",
     "openai": "^6.27.0",
     "pg": "^8.22.0",
     "zod": "^4.4.3"

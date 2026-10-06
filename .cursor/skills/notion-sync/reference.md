@@ -81,6 +81,10 @@ Workspace: **ABC Advise**. MCP: `user-notion`.
 | Documentação Técnica Qdrant | `341dca3e-b7d8-809f-a655-eff481e08b65` | Vetores |
 | Documentação Técnica Railway | `341dca3e-b7d8-80a5-957d-f116e33f88c1` | Deploy |
 | Documentação Técnica N8N | `341dca3e-b7d8-80f2-8cb3-de5b35160971` | Legado parcial (envio) |
+| Requisitos Agent-Proxy (Teams / Copilot / Azure) | `3badca3e-b7d8-8129-a1ff-f2ced6d06f50` | Spec certificação / Azure |
+| Integração Backend API+MCP ↔ Agent-Proxy | `3badca3e-b7d8-8182-b108-d510ad33c7f7` | Contratos REST/MCP → Teams |
+| **API Reference — BuscaFornecedor (REST + MCP)** | `3badca3e-b7d8-817a-b969-ce18a2b935be` | Referência + aponta catálogo |
+| **API Endpoints Catalog — BuscaFornecedor** | `3badca3e-b7d8-8169-8551-f99463182685` | Fichas input/output por endpoint + MCP |
 
 ## Template — progresso na página da fase
 

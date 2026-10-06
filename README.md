@@ -2,8 +2,9 @@
 
 API + MCP de busca híbrida B2B (Qdrant + OpenAI + Supabase), deploy Railway.
 
-**Documentação:** Notion Document Hub → *Documentação Técnica SearchAPI + MCP (Railway)*  
-**Código = verdade operacional.** Planejamento de produto = Notion Roadmap (Fase 1).
+**Documentação:** Notion Document Hub → *Documentação Técnica SearchAPI + MCP (Railway)* · *API Reference — BuscaFornecedor (REST + MCP)*  
+**Código = verdade operacional.** Planejamento de produto = Notion Roadmap (Fase 1).  
+**Referência local:** [`docs/api/REFERENCE.md`](docs/api/REFERENCE.md) · [`docs/api/ENDPOINTS.md`](docs/api/ENDPOINTS.md)
 
 ## Quick start
 

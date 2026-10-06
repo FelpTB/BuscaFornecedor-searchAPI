@@ -4,6 +4,7 @@ import cors from "cors";
 import { mountMcp } from "./mcp/mountMcp.js";
 import { createApiRouter, executeSearchByText, getPublicConfig } from "./routes/index.js";
 import { createXrayRouter } from "./xray/routes.js";
+import { createDocsRouter } from "./docs/routes.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import { LIMITS, getServerConfig, getCorsOrigins, isProductionRuntime } from "./config/env.js";
@@ -16,7 +17,7 @@ import { isXrayEnabled } from "./config/features.js";
  * 1. trust proxy + helmet + CORS
  * 2. requestId
  * 3. json body
- * 4. health (público)
+ * 4. health + docs (públicos)
  * 5. X-Ray (harness — desligável via XRAY_ENABLED=0)
  * 6. API router (auth + business)
  * 7. MCP (auth alinhada)
@@ -61,6 +62,7 @@ export function createApp() {
       mcp: "/mcp",
       search: "/search/text",
       config: "/config",
+      docs: "/docs",
       search_xray: isXrayEnabled() ? "/search/xray" : null,
       xray_enabled: isXrayEnabled(),
       auth_mode: serverCfg.authMode,
@@ -70,6 +72,8 @@ export function createApp() {
       uptime: process.uptime(),
     });
   });
+
+  app.use(createDocsRouter());
 
   // Chat do agente (`/search/xray/chat`) é o backend da UI — sempre montado.
   // XRAY_ENABLED=0 só esconde o harness HTML; não derruba o produto.
