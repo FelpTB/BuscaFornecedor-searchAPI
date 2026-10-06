@@ -284,7 +284,8 @@ Cada ficha em [ENDPOINTS.md](./ENDPOINTS.md) inclui: o que faz, como funciona, t
 | Campo | Tipo | Default | Descrição |
 |-------|------|---------|-----------|
 | `query` | string (min 1) | — | **Obrigatório.** Texto a vetorizar |
-| `queries` | `Record<string,string>` | — | Override de texto por dimensão |
+| `queries` | `Record<string,string>` | — | Texto por dimensão |
+| `empty_vectors` | `query` \| `ignore` | `query` | Dimensões sem texto em `queries`: `query` usa o texto de `query`; `ignore` tira da busca e redistribui o peso entre as preenchidas |
 | `weights` | `Record<string,number>` | preset ou iguais | Pesos manuais por dimensão (+ `bm25` se híbrido). Prevalece sobre `weight_preset` |
 | `weight_preset` | `escopo` \| `publico_alvo` \| `equilibrado` | — | Pesos prontos por objetivo de busca |
 | `search_focus` | `produto` \| `servico` \| `mista` | `mista` | Zera o vetor oposto e redistribui o peso conforme o preset |
@@ -615,6 +616,7 @@ get_config | search_text | list_conversations | get_conversation | delete_conver
 
 | Data | Nota |
 |------|------|
+| 2026-10-06 | `empty_vectors` (`query` \| `ignore`) para dimensões sem texto em `queries` |
 | 2026-10-06 | `weight_preset` / `search_focus`, novos campos de resposta e de `/config`, `/auth/refresh` e `PATCH …/qualidade` nas tabelas, página `GET /docs` e Guia de uso |
 | 2026-08-12 | Referência inicial alinhada a `src/` (REST + MCP + auth + display) |
 

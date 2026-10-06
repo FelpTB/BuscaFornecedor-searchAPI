@@ -22,13 +22,16 @@ import { getTelemetryMode } from "./telemetry/enqueue.js";
 import { getNotificacaoMode, isNotificacaoConfigured, getNotificacaoApiBase } from "./clients/notificacaoClient.js";
 import { mergeBm25Query, resolveExactTerms, detectQuerySpecificity, stripBm25Weight } from "./search/bm25Query.js";
 import {
+  EMPTY_VECTORS_VALUES,
   SEARCH_FOCUS_VALUES,
   WEIGHT_PRESET_VALUES,
   WEIGHT_PRESETS,
+  normalizeEmptyVectors,
   normalizeSearchFocus,
   normalizeWeightPreset,
   buildPresetWeights,
   applySearchFocus,
+  restrictWeightsToDims,
 } from "./search/weightPresets.js";
 
 const COLLECTION_NAME = process.env.COLLECTION_NAME;
@@ -477,33 +480,41 @@ function coerceJsonObjectField(raw, fieldName, { allowEmpty = true } = {}) {
   return { error: { status: 400, message: `Campo '${fieldName}' deve ser um objeto` } };
 }
 
+function filledQueryDims(queries, dimensionKeys) {
+  if (!queries) return [];
+  return dimensionKeys.filter((dim) => typeof queries[dim] === "string" && queries[dim].trim());
+}
+
 /**
  * Vetoriza textos por dimensão com OpenAI.
- * - query: texto padrão replicado em todas as dimensões
+ * - query: texto padrão das dimensões sem texto próprio (emptyVectors "query")
  * - queries: opcional, sobrescreve o texto de dimensões específicas
+ * - emptyVectors "ignore": dimensões sem texto em queries não são vetorizadas
+ *   (perDimText null); recebem o vetor de uma dimensão preenchida só para manter
+ *   o formato, e devem ter peso 0.
  */
-
-async function buildVectorsFromQueryText({ query, queries, dimensionKeys, embedDimensions }) {
+async function buildVectorsFromQueryText({ query, queries, dimensionKeys, embedDimensions, emptyVectors = "query" }) {
   const perDimText = {};
   const uniqueTexts = new Map();
+  const filled = new Set(filledQueryDims(queries, dimensionKeys));
 
   for (const dim of dimensionKeys) {
-    const override =
-      queries && typeof queries[dim] === "string" && queries[dim].trim()
-        ? queries[dim].trim()
-        : null;
-    const text = override || query;
-    perDimText[dim] = text;
-    if (!uniqueTexts.has(text)) uniqueTexts.set(text, null);
+    if (filled.has(dim)) {
+      perDimText[dim] = queries[dim].trim();
+    } else {
+      perDimText[dim] = emptyVectors === "ignore" ? null : query;
+    }
+    if (perDimText[dim] !== null && !uniqueTexts.has(perDimText[dim])) uniqueTexts.set(perDimText[dim], null);
   }
 
   for (const text of uniqueTexts.keys()) {
     uniqueTexts.set(text, await embedQueryText(text, embedDimensions));
   }
 
+  const placeholder = uniqueTexts.values().next().value;
   const vectors = {};
   for (const dim of dimensionKeys) {
-    vectors[dim] = uniqueTexts.get(perDimText[dim]);
+    vectors[dim] = perDimText[dim] === null ? placeholder : uniqueTexts.get(perDimText[dim]);
   }
   return { vectors, perDimText, embedding_dims: vectors[dimensionKeys[0]]?.length ?? 0 };
 }
@@ -624,6 +635,22 @@ async function executeSearchByText(rawBody = {}, options = {}) {
     }
   }
 
+  const emptyVectorsRaw = normalizeEmptyVectors(body.empty_vectors);
+  if (emptyVectorsRaw === null) {
+    const err = new Error(`Campo 'empty_vectors' inválido. Valores: ${EMPTY_VECTORS_VALUES.join(", ")}`);
+    err.status = 400;
+    throw err;
+  }
+  const emptyVectors = emptyVectorsRaw || "query";
+  const filledDims = filledQueryDims(queries, dimensionKeys);
+  if (emptyVectors === "ignore" && filledDims.length === 0) {
+    const err = new Error(
+      `empty_vectors=ignore exige ao menos uma dimensão com texto em queries. Dimensões: ${dimensionKeys.join(", ")}`,
+    );
+    err.status = 400;
+    throw err;
+  }
+
   const bm25VectorName = process.env.QDRANT_BM25_VECTOR_NAME?.trim();
   const exactTerms = resolveExactTerms({
     exact_terms: body.exact_terms,
@@ -672,6 +699,17 @@ async function executeSearchByText(rawBody = {}, options = {}) {
     }
     weights = focused;
   }
+  if (emptyVectors === "ignore" && filledDims.length < dimensionKeys.length) {
+    const restricted = restrictWeightsToDims(weights, filledDims, dimensionKeys);
+    if (!restricted) {
+      const err = new Error(
+        `Nenhuma dimensão preenchida em queries (${filledDims.join(", ")}) tem peso > 0. Ajuste weights ou search_focus.`,
+      );
+      err.status = 400;
+      throw err;
+    }
+    weights = restricted;
+  }
   if (bm25_query) {
     weights = ensureBm25Weight(weights, dimensionKeys) || weights;
   } else {
@@ -700,6 +738,7 @@ async function executeSearchByText(rawBody = {}, options = {}) {
       queries,
       dimensionKeys,
       embedDimensions,
+      emptyVectors,
     });
 
     const searchBody = {
@@ -739,6 +778,7 @@ async function executeSearchByText(rawBody = {}, options = {}) {
       weights_source: weightsSource,
       weight_preset: weightPreset || null,
       search_focus: searchFocus || null,
+      empty_vectors: emptyVectors,
     });
 
     const payload = await runMultiVectorSearch({
@@ -760,6 +800,7 @@ async function executeSearchByText(rawBody = {}, options = {}) {
       weights_source: weightsSource,
       weight_preset: weightPreset || null,
       search_focus: searchFocus || null,
+      empty_vectors: emptyVectors,
       latency_ms: Date.now() - start,
     };
   } catch (err) {
@@ -803,6 +844,15 @@ function getPublicConfig() {
         equilibrado: "dividido igualmente entre todas as dimensões densas restantes",
         publico_alvo: "dividido igualmente entre publico e cliente",
         sem_preset: "dimensão em foco (pesos explícitos ou padrão)",
+      },
+    },
+    empty_vectors: {
+      values: EMPTY_VECTORS_VALUES,
+      default: "query",
+      behavior: {
+        query: "dimensões sem texto em queries usam o texto de query",
+        ignore:
+          "busca só nas dimensões preenchidas em queries; o peso das vazias é redistribuído proporcionalmente entre elas",
       },
     },
     bm25: {

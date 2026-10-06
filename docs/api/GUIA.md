@@ -248,7 +248,16 @@ Localização funciona melhor como **filtro** (`uf`, `cidade`) do que dentro do 
 
 ### 4.2 Textos diferentes por dimensão (`queries`)
 
-Por padrão, o mesmo texto é comparado com todas as dimensões. Se quiser ser mais preciso, envie um texto para cada dimensão. As dimensões omitidas usam o `query`.
+Por padrão, o mesmo texto é comparado com todas as dimensões. Se quiser ser mais preciso, envie um texto para cada dimensão.
+
+O campo `empty_vectors` decide o que acontece com as dimensões que você **não** preencheu em `queries`:
+
+| `empty_vectors` | Dimensões sem texto | Quando usar |
+|-----------------|---------------------|-------------|
+| `query` (padrão) | Usam o texto de `query` e mantêm o peso delas | Você detalhou só parte do pedido e quer que o resto da empresa também seja comparado com o pedido geral |
+| `ignore` | Ficam de fora da busca; o peso delas é redistribuído entre as preenchidas, na mesma proporção | Você sabe exatamente quais aspectos importam (ex.: só o produto) e não quer que o restante influencie |
+
+Exemplo com o padrão: `servico` e `publico` usam os textos abaixo; `produto`, `descricao` e `cliente` usam o `query`.
 
 ```json
 {
@@ -259,6 +268,24 @@ Por padrão, o mesmo texto é comparado com todas as dimensões. Se quiser ser m
   }
 }
 ```
+
+Exemplo com `ignore`: a busca compara **apenas** o produto. Com `weight_preset: "escopo"` e BM25 ativo, os pesos usados ficam `produto: 0,80` e `bm25: 0,20`.
+
+```json
+{
+  "query": "blocos de concreto para obra",
+  "queries": { "produto": "blocos de concreto estrutural" },
+  "empty_vectors": "ignore",
+  "weight_preset": "escopo"
+}
+```
+
+Com `ignore`:
+
+- É preciso preencher ao menos uma dimensão em `queries`; senão a API responde `400`.
+- O `query` continua obrigatório: ele alimenta o BM25 (quando `bm25_query` não é enviado), o rerank e o histórico.
+- Se `search_focus` zerar a única dimensão preenchida (ex.: foco `servico` com só `produto` preenchido), a API responde `400`.
+- A resposta mostra `query_texts` com `null` nas dimensões ignoradas e `empty_vectors: "ignore"`.
 
 ### 4.3 Filtros (`filter` e `filter_not`)
 

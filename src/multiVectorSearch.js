@@ -249,8 +249,14 @@ export async function multiVectorSearch({
       })
     : Promise.resolve({ byId: {}, idList: [], count: 0 });
 
+  // Dimensões com peso 0 não pontuam no score denso; consultá-las só custaria latência.
+  const activeIdx = dimensionKeys.map((_, i) => i).filter((i) => Number(weights[dimensionKeys[i]]) > 0);
+  const fetchIdx = activeIdx.length > 0 ? activeIdx : dimensionKeys.map((_, i) => i);
+  const fetchDims = fetchIdx.map((i) => dimensionKeys[i]);
+  const fetchNames = fetchIdx.map((i) => vectorNames[i]);
+
   const denseFullPromise = fetchDenseAll(
-    collection, dimensionKeys, vectorNames, vectors, limitPerVector, filter
+    collection, fetchDims, fetchNames, vectors, limitPerVector, filter
   );
 
   const [bm25Data, denseFullById] = await Promise.all([bm25Promise, denseFullPromise]);
@@ -260,7 +266,7 @@ export async function multiVectorSearch({
   // Stage 1b: Fetch dense within BM25 prefetch pool (for Path A)
   const prefetchIds150 = bm25IdList.slice(0, 150);
   const densePrefetchById = prefetchIds150.length > 0
-    ? await fetchDenseAll(collection, dimensionKeys, vectorNames, vectors, limitPerVector, buildDenseFilter(filter, prefetchIds150))
+    ? await fetchDenseAll(collection, fetchDims, fetchNames, vectors, limitPerVector, buildDenseFilter(filter, prefetchIds150))
     : {};
 
   // Stage 2: Run 2 paths

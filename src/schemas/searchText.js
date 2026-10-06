@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { LIMITS } from "../config/env.js";
 import {
+  EMPTY_VECTORS_VALUES,
   SEARCH_FOCUS_VALUES,
   WEIGHT_PRESET_VALUES,
+  normalizeEmptyVectors,
   normalizeSearchFocus,
   normalizeWeightPreset,
 } from "../search/weightPresets.js";
@@ -29,7 +31,13 @@ export const searchTextInputShape = {
     .record(z.string(), z.string())
     .optional()
     .describe(
-      "Texto por dimensão (ex.: { produto: '...', servico: '...' }). Dimensões omitidas usam query.",
+      "Texto por dimensão (ex.: { produto: '...', servico: '...' }). O que acontece com as dimensões omitidas depende de empty_vectors.",
+    ),
+  empty_vectors: z
+    .enum(EMPTY_VECTORS_VALUES)
+    .optional()
+    .describe(
+      "Dimensões sem texto em queries: query (padrão) usa o texto de query nelas; ignore busca só nas dimensões preenchidas em queries e redistribui o peso das vazias entre elas (exige ao menos uma dimensão em queries).",
     ),
   weights: z
     .record(z.string(), z.number())
@@ -150,6 +158,8 @@ export function parseSearchTextBody(raw) {
   if (focus !== null) body.search_focus = focus;
   const preset = normalizeWeightPreset(body.weight_preset);
   if (preset !== null) body.weight_preset = preset;
+  const emptyVectors = normalizeEmptyVectors(body.empty_vectors);
+  if (emptyVectors !== null) body.empty_vectors = emptyVectors;
 
   const result = searchTextBodySchema.safeParse(body);
   if (!result.success) {

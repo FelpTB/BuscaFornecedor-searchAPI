@@ -182,6 +182,14 @@ Expõe o **contrato operacional** da busca: dimensões, nomes de vetores, filtro
       "sem_preset": "dimensão em foco (pesos explícitos ou padrão)"
     }
   },
+  "empty_vectors": {
+    "values": ["query", "ignore"],
+    "default": "query",
+    "behavior": {
+      "query": "dimensões sem texto em queries usam o texto de query",
+      "ignore": "busca só nas dimensões preenchidas em queries; o peso das vazias é redistribuído proporcionalmente entre elas"
+    }
+  },
   "bm25": {
     "vector_name": "bm25_complete_profile",
     "payload_keys": null,
@@ -250,6 +258,7 @@ Principais blocos:
 | `payload_keys` / `payload_keys_full_text` | Chaves permitidas em `filter` e `filter_not` (exatas / texto) |
 | `weight_presets` | Valores de `weight_preset`, pesos de cada um e regra de precedência |
 | `search_focus` | Valores de `search_focus` e para onde vai o peso zerado em cada preset |
+| `empty_vectors` | O que acontece com dimensões sem texto em `queries` (padrão e opções) |
 | `bm25` / `dual_path` | Configuração da busca por palavra-chave e da fusão híbrida |
 | `llm_rerank` | Se o rerank está disponível, modelo e tamanho do pool |
 | `limits` | Padrões e máximos de `final_limit` e `limit_per_vector` |
@@ -964,9 +973,10 @@ Exclui permanentemente a conversa do usuário (cascade nas mensagens) e esquece 
 5. **Resolve os pesos**, nesta ordem:
    1. pesos-base: `weights` explícito → senão `weight_preset` → senão pesos iguais;
    2. aplica `search_focus` (zera produto ou serviço e redistribui o peso conforme o preset);
-   3. ajusta o BM25 (reserva 0,20 se ativo; remove a chave se desligado).
-6. Vetoriza `query` (e overrides em `queries`) com `text-embedding-3-small`.
-7. Executa multi-vector search no Qdrant (+ BM25 se configurado), em dois caminhos fundidos por RRF.
+   3. com `empty_vectors: "ignore"`, zera as dimensões sem texto em `queries` e redistribui o peso delas, proporcionalmente, entre as preenchidas;
+   4. ajusta o BM25 (reserva 0,20 se ativo; remove a chave se desligado).
+6. Vetoriza com `text-embedding-3-small` os textos de `queries` e, com `empty_vectors: "query"` (padrão), o `query` para as dimensões sem texto próprio.
+7. Executa multi-vector search no Qdrant (+ BM25 se configurado), em dois caminhos fundidos por RRF. Dimensões com peso 0 não são consultadas.
 8. Opcional: rerank LLM no pool.
 9. Responde JSON + header `X-Search-Id`, incluindo `weights_used`.
 10. `maybeEnqueueFromSearch` (async) → `consultas` / aparições / `recebe-consulta`. Quando o cliente não envia `weights`, a telemetria grava os pesos efetivos.
@@ -1007,6 +1017,7 @@ Completo (todos os campos):
     "produto": "painel fotovoltaico",
     "servico": "instalação solar"
   },
+  "empty_vectors": "query",
   "weights": {
     "produto": 0.3,
     "servico": 0.2,
@@ -1036,7 +1047,8 @@ Completo (todos os campos):
 | Campo | Tipo | Obrigatório | Default | Descrição |
 |-------|------|-------------|---------|-----------|
 | `query` | string (min 1) | **sim** | — | Texto principal a vetorizar |
-| `queries` | `Record<string,string>` | não | — | Override por dimensão |
+| `queries` | `Record<string,string>` | não | — | Texto por dimensão |
+| `empty_vectors` | `query` \| `ignore` | não | `query` | Dimensões sem texto em `queries`: usam `query` ou ficam de fora da busca |
 | `weights` | `Record<string,number>` | não | preset ou iguais | Pesos manuais. Ver regras de soma abaixo |
 | `weight_preset` | `escopo` \| `publico_alvo` \| `equilibrado` | não | — | Pesos prontos. Ignorado se `weights` for enviado |
 | `search_focus` | `produto` \| `servico` \| `mista` | não | `mista` | Zera o vetor oposto e redistribui o peso dele |
@@ -1163,6 +1175,7 @@ Regras (`assertCanSearch`):
   "weights_source": "preset",
   "weight_preset": "escopo",
   "search_focus": "servico",
+  "empty_vectors": "query",
   "latency_ms": 842,
   "auth": {
     "authenticated": true,
@@ -1196,11 +1209,12 @@ Regras (`assertCanSearch`):
 | `mode` | string | `"text"` |
 | `embedding_model` | string | Modelo usado |
 | `embedding_dims` | number \| undefined | Dimensões |
-| `query_texts` | object | Texto efetivo por dimensão |
+| `query_texts` | object | Texto efetivo por dimensão (`null` nas dimensões ignoradas por `empty_vectors: "ignore"`) |
 | `weights_used` | object | Pesos finais aplicados (com foco e BM25) |
 | `weights_source` | `explicit` \| `preset` \| `default` | Origem dos pesos-base |
 | `weight_preset` | string \| null | Preset aplicado (normalizado) |
 | `search_focus` | string \| null | Foco aplicado (normalizado) |
+| `empty_vectors` | `query` \| `ignore` | Tratamento aplicado às dimensões sem texto em `queries` |
 | `latency_ms` | number | Tempo total no servidor |
 | `rerank` | object? | Só quando o rerank roda: `{ enabled, model, tokens_used, pool_size, query_used }` ou erro |
 | `auth` | object | Visão pública da credencial |
@@ -1220,6 +1234,8 @@ Com `debug=1` / `debug: true`, pode incluir `debug` e `collection`.
 | `400` | Pesos inválidos | `Campo 'weights' inválido. Chaves esperadas: produto, servico, descricao, publico, cliente, bm25 (soma = 1.0)` |
 | `400` | Filtro fora da allowlist | `Chaves de filtro não permitidas: telefone. Permitidas: …` |
 | `400` | Foco sem dimensões produto/serviço na coleção | `search_focus requer dimensões de produto e serviço na coleção` |
+| `400` | `empty_vectors: "ignore"` sem nenhuma dimensão em `queries` | `empty_vectors=ignore exige ao menos uma dimensão com texto em queries` |
+| `400` | `empty_vectors: "ignore"` e o foco (ou `weights`) zera todas as dimensões preenchidas | `Nenhuma dimensão preenchida em queries (produto) tem peso > 0` |
 | `401` | Sem auth / sem userId | `Busca requer autenticação…` |
 | `403` | Sem scope search; sem comprador; cota esgotada | — |
 | `429` | Rate limit | `Too many search requests` |
@@ -1425,6 +1441,8 @@ Rotas sob `/search/xray*` são **harness QA** (HTML + probes). Não fazem parte 
 
 O chat do X-Ray (`POST /search/xray/chat`) aceita, além de `message`, `final_limit`, `debug` e `rerank`, os campos opcionais `weight_preset` e `search_focus`. Quando `weight_preset` é enviado, ele substitui os pesos do Query Manager; `search_focus` é repassado à busca. Na interface, são os seletores **pré-config** e **foco** ao lado do campo de mensagem.
 
+Ao refazer a busca pelo painel (`search_params`), dimensões sem texto ficam com peso 0, como em `empty_vectors: "ignore"`. Para que elas usem o pedido principal, envie `search_params.empty_vectors: "query"`.
+
 ---
 
 ## 17. `GET /docs`
@@ -1457,5 +1475,6 @@ Slug inexistente → `404` JSON padrão.
 
 | Data | Nota |
 |------|------|
+| 2026-10-06 | `empty_vectors` (`query` \| `ignore`) em `POST /search/text` / `search_text` / `search_params` do X-Ray, na resposta e em `/config`; dimensões com peso 0 não são mais consultadas no Qdrant |
 | 2026-10-06 | `weight_preset` e `search_focus` em `POST /search/text` / `search_text`; `weights_used` e afins na resposta; `/config` com `weight_presets` e `search_focus`; `PATCH /auth/consultas/:searchId/qualidade`; `GET /docs`; campos novos em `/health` |
 | 2026-08-12 | Catálogo completo input/output por endpoint + MCP tools |

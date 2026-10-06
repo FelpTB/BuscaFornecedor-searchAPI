@@ -14,6 +14,7 @@ import {
   normalizeUfList,
   formatUfFilterValue,
   QM_FIXED,
+  planSearchFromParams,
   zeroWeightsWithoutQueries,
 } from "../src/xray/searchAgent.js";
 import { CHAT_TOOLS } from "../src/xray/conversationalAgent.js";
@@ -43,8 +44,10 @@ import {
   WEIGHT_PRESETS,
   applySearchFocus,
   buildPresetWeights,
+  normalizeEmptyVectors,
   normalizeSearchFocus,
   normalizeWeightPreset,
+  restrictWeightsToDims,
 } from "../src/search/weightPresets.js";
 
 process.env.AUTH_MODE = "off";
@@ -176,6 +179,36 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(pubBm25.bm25, 0.2);
   assert.ok(Math.abs(sum(pubBm25) - sum(withBm25)) < 1e-6);
   console.log("OK weight presets + search focus");
+}
+
+{
+  const dims = ["produto", "servico", "descricao", "publico", "cliente"];
+  const sum = (w) => Object.values(w).reduce((a, b) => a + b, 0);
+  assert.equal(normalizeEmptyVectors("Ignorar"), "ignore");
+  assert.equal(normalizeEmptyVectors("usar query"), "query");
+  assert.equal(normalizeEmptyVectors(""), undefined);
+  assert.equal(normalizeEmptyVectors("todos"), null);
+  assert.equal(parseSearchTextBody({ query: "x", empty_vectors: "skip" }).data.empty_vectors, "ignore");
+  assert.equal(parseSearchTextBody({ query: "x", empty_vectors: "todos" }).success, false);
+
+  const escopo = buildPresetWeights("escopo", dims);
+  const onlyProduto = restrictWeightsToDims(escopo, ["produto"], dims);
+  assert.equal(onlyProduto.produto, 1);
+  for (const k of ["servico", "descricao", "publico", "cliente"]) assert.equal(onlyProduto[k], 0);
+
+  const prodPub = restrictWeightsToDims(escopo, ["produto", "publico"], dims);
+  assert.ok(Math.abs(prodPub.produto / prodPub.publico - escopo.produto / escopo.publico) < 1e-4);
+  assert.ok(Math.abs(sum(prodPub) - 1) < 1e-6);
+
+  const withBm25 = { produto: 0.3, servico: 0.2, descricao: 0.1, publico: 0.1, cliente: 0.1, bm25: 0.2 };
+  const keptBm25 = restrictWeightsToDims(withBm25, ["servico", "descricao"], dims);
+  assert.equal(keptBm25.bm25, 0.2);
+  assert.ok(Math.abs(keptBm25.servico - 0.8 * (2 / 3)) < 1e-5);
+  assert.ok(Math.abs(sum(keptBm25) - 1) < 1e-6);
+
+  const focoServico = applySearchFocus(escopo, "servico", dims, "escopo");
+  assert.equal(restrictWeightsToDims(focoServico, ["produto"], dims), null);
+  console.log("OK empty_vectors + restrictWeightsToDims");
 }
 
 {
@@ -319,6 +352,29 @@ process.env.QDRANT_DIMENSION_KEYS =
   assert.equal(wM.produto, 0.3);
   assert.equal(wM.servico, 0.3);
   console.log("OK Query Manager fixed weights");
+}
+
+{
+  const config = { dimension_keys: ["produto", "servico", "descricao", "publico", "cliente"] };
+  const weights = { produto: 0.4, servico: 0.2, descricao: 0.2, publico: 0.1, cliente: 0.1 };
+  const base = { query: "embalagens", queries: { produto: "embalagens plásticas" }, weights, bm25: false };
+
+  const strict = (await planSearchFromParams(base, config)).mcp_tool_call.arguments;
+  assert.equal(strict.weights.servico, 0);
+  assert.equal(strict.empty_vectors, undefined);
+
+  const fill = (await planSearchFromParams({ ...base, empty_vectors: "query" }, config)).mcp_tool_call.arguments;
+  assert.equal(fill.empty_vectors, "query");
+  assert.ok(fill.weights.servico > 0);
+
+  const ignore = (await planSearchFromParams({ ...base, empty_vectors: "ignorar" }, config)).mcp_tool_call.arguments;
+  assert.equal(ignore.empty_vectors, "ignore");
+  assert.equal(ignore.weights.servico, 0);
+
+  const noQueries = (await planSearchFromParams({ query: "x", empty_vectors: "ignore", bm25: false }, config))
+    .mcp_tool_call.arguments;
+  assert.equal(noQueries.empty_vectors, undefined);
+  console.log("OK planSearchFromParams empty_vectors");
 }
 
 {

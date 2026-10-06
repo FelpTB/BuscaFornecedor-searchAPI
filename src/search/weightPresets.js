@@ -1,10 +1,12 @@
 /**
- * Foco da busca (produto | servico | mista) e pré-configurações de pesos
- * (escopo | publico_alvo | equilibrado) para POST /search/text e tool search_text.
+ * Foco da busca (produto | servico | mista), pré-configurações de pesos
+ * (escopo | publico_alvo | equilibrado) e tratamento de vetores sem texto
+ * (query | ignore) para POST /search/text e tool search_text.
  */
 
 export const SEARCH_FOCUS_VALUES = ["produto", "servico", "mista"];
 export const WEIGHT_PRESET_VALUES = ["escopo", "publico_alvo", "equilibrado"];
+export const EMPTY_VECTORS_VALUES = ["query", "ignore"];
 
 /**
  * Pesos densos por pré-configuração (soma 1.0), em dimensões canônicas.
@@ -31,6 +33,15 @@ const WEIGHT_PRESET_ALIASES = {
   equilibrada: "equilibrado",
   balanceado: "equilibrado",
   balanceada: "equilibrado",
+};
+
+const EMPTY_VECTORS_ALIASES = {
+  usar_query: "query",
+  preencher: "query",
+  fallback: "query",
+  ignorar: "ignore",
+  skip: "ignore",
+  omit: "ignore",
 };
 
 function foldToken(value) {
@@ -60,6 +71,10 @@ export function normalizeSearchFocus(raw) {
 
 export function normalizeWeightPreset(raw) {
   return normalizeEnumValue(raw, WEIGHT_PRESET_VALUES, WEIGHT_PRESET_ALIASES);
+}
+
+export function normalizeEmptyVectors(raw) {
+  return normalizeEnumValue(raw, EMPTY_VECTORS_VALUES, EMPTY_VECTORS_ALIASES);
 }
 
 /** Mapeia dimensões canônicas para as chaves reais da coleção (QDRANT_DIMENSION_KEYS). */
@@ -143,5 +158,29 @@ export function applySearchFocus(weights, focus, dimensionKeys, preset) {
   for (const k of targets) out[k] = round6(Number(out[k] || 0) + share);
   const residual = round6(freed - share * targets.length);
   if (residual !== 0) out[targets[0]] = round6(out[targets[0]] + residual);
+  return out;
+}
+
+/**
+ * Mantém peso só em keepKeys: as demais dimensões densas vão a 0 e o peso delas é
+ * redistribuído proporcionalmente entre as mantidas (soma densa e bm25 preservados).
+ * @returns {Record<string, number>|null} null se nenhuma dimensão mantida tiver peso > 0.
+ */
+export function restrictWeightsToDims(weights, keepKeys, dimensionKeys) {
+  if (!weights) return null;
+  const keep = new Set(keepKeys);
+  const weightOf = (k) => Number(weights[k] || 0);
+  const denseTotal = dimensionKeys.reduce((a, k) => a + weightOf(k), 0);
+  const keptTotal = dimensionKeys.reduce((a, k) => a + (keep.has(k) ? weightOf(k) : 0), 0);
+  if (keptTotal <= 0) return null;
+  const out = { ...weights };
+  for (const k of dimensionKeys) {
+    out[k] = keep.has(k) ? round6((weightOf(k) * denseTotal) / keptTotal) : 0;
+  }
+  const delta = round6(denseTotal - dimensionKeys.reduce((a, k) => a + out[k], 0));
+  if (delta !== 0) {
+    const target = dimensionKeys.find((k) => out[k] > 0);
+    out[target] = round6(out[target] + delta);
+  }
   return out;
 }

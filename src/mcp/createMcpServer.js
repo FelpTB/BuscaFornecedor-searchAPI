@@ -55,6 +55,7 @@ export function createMcpServer(deps) {
       description:
         "Busca empresas/fornecedores (Qdrant híbrido: densos + BM25 dual-path RRF). " +
         "Suporta weights, weight_preset (escopo|publico_alvo|equilibrado), search_focus (produto|servico|mista), " +
+        "queries por dimensão com empty_vectors (query = vazias usam query | ignore = só as preenchidas), " +
         "filter, filter_not, bm25, limites e rerank LLM. " +
         "Use get_config para chaves permitidas. Mesma lógica de POST /search/text.",
       inputSchema: searchTextInputShape,

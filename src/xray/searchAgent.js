@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { fetchCitiesNearby, collectUfsFromNearby } from "../clients/citiesApi.js";
 import { detectQuerySpecificity, mergeBm25Query, resolveExactTerms } from "../search/bm25Query.js";
+import { normalizeEmptyVectors } from "../search/weightPresets.js";
 
 /**
  * Pré-proxy X-Ray = Query Manager B2B + bridge para tool MCP search_text.
@@ -769,15 +770,15 @@ export async function planSearchFromParams(params = {}, config = {}, options = {
     typeof params.bm25_query === "string" ? params.bm25_query.trim() : "";
   const includeBm25 = params.bm25 !== false && Boolean(keywords);
 
-  const weights = zeroWeightsWithoutQueries(
-    coerceWeightMap(
-      params.weights && typeof params.weights === "object" ? params.weights : {},
-      dimensionKeys,
-      includeBm25,
-    ),
-    queries,
-    { includeBm25 },
+  const emptyVectors = normalizeEmptyVectors(params.empty_vectors) || undefined;
+  const coercedWeights = coerceWeightMap(
+    params.weights && typeof params.weights === "object" ? params.weights : {},
+    dimensionKeys,
+    includeBm25,
   );
+  const weights = emptyVectors === "query"
+    ? coercedWeights
+    : zeroWeightsWithoutQueries(coercedWeights, queries, { includeBm25 });
 
   const modelo = pickModeloNegocio(params.modelo_negocio);
   const filter = {};
@@ -889,6 +890,9 @@ export async function planSearchFromParams(params = {}, config = {}, options = {
   };
   if (Object.keys(filter).length) toolArguments.filter = filter;
   if (exactTerms.length) toolArguments.exact_terms = exactTerms;
+  if (emptyVectors && (emptyVectors === "query" || Object.keys(queries).length > 0)) {
+    toolArguments.empty_vectors = emptyVectors;
+  }
   if (includeBm25) {
     toolArguments.bm25_query = keywords;
   } else {
